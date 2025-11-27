@@ -241,10 +241,6 @@ function AppContent() {
               <a href="https://massa.net" target="_blank" rel="noopener noreferrer" className="hover:text-primary-400">
                 Massa Network
               </a>
-              <span>•</span>
-              <a href="#" className="hover:text-primary-400">Docs</a>
-              <span>•</span>
-              <a href="#" className="hover:text-primary-400">GitHub</a>
             </div>
             <p className="text-sm text-slate-500">
               Built on Massa Blockchain • Testnet
