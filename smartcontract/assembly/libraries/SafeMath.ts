@@ -1,4 +1,5 @@
 import { u256 } from 'as-bignum/assembly';
+import { ZERO } from './Constants';
 
 /**
  * SafeMath library for u256 operations with overflow/underflow protection
@@ -9,9 +10,9 @@ export class SafeMath {
    * Adds two u256 values with overflow check
    */
   static add(a: u256, b: u256): u256 {
-    const result = u256.add(a, b);
-    assert(result >= a, 'SafeMath: addition overflow');
-    return result;
+    const c = u256.add(a, b);
+    assert(c >= a, 'SafeMath: addition overflow');
+    return c;
   }
 
   /**
@@ -23,53 +24,32 @@ export class SafeMath {
   }
 
   /**
-   * Multiplies two u256 values
+   * Multiplies two u256 values with overflow check
    */
   static mul(a: u256, b: u256): u256 {
-    if (a == u256.Zero) {
-      return u256.Zero;
+    if (a.isZero()) {
+      return ZERO;
     }
-    return u256.mul(a, b);
+    const c = u256.mul(a, b);
+    assert(u256.eq(u256.div(c, a), b), 'SafeMath: multiplication overflow');
+    return c;
   }
 
   /**
    * Divides two u256 values
+   * Uses native u256.div for efficiency
    */
   static div(a: u256, b: u256): u256 {
-    assert(b > u256.Zero, 'SafeMath: division by zero');
-    // Implement division using subtraction (inefficient but works)
-    if (a < b) {
-      return u256.Zero;
-    }
-    if (a == b) {
-      return u256.One;
-    }
-
-    // For small numbers, convert to u64
-    if (a <= u256.from(u64.MAX_VALUE) && b <= u256.from(u64.MAX_VALUE)) {
-      const a64 = a.toU64();
-      const b64 = b.toU64();
-      return u256.from(a64 / b64);
-    }
-
-    // For larger numbers, use repeated subtraction (very slow but works as fallback)
-    let result = u256.Zero;
-    let remainder = a;
-    while (remainder >= b) {
-      remainder = u256.sub(remainder, b);
-      result = u256.add(result, u256.One);
-    }
-    return result;
+    assert(u256.gt(b, ZERO), 'SafeMath: division by zero');
+    return u256.div(a, b);
   }
 
   /**
    * Modulo operation
    */
   static mod(a: u256, b: u256): u256 {
-    assert(b > u256.Zero, 'SafeMath: modulo by zero');
-    const quotient = SafeMath.div(a, b);
-    const product = SafeMath.mul(quotient, b);
-    return SafeMath.sub(a, product);
+    assert(!b.isZero(), 'SafeMath: modulo by zero');
+    return u256.rem(a, b);
   }
 
   /**
@@ -93,8 +73,8 @@ export class SafeMath {
    * @returns value * (basisPoints / 10000)
    */
   static mulBP(value: u256, basisPoints: u32): u256 {
-    if (value == u256.Zero || basisPoints == 0) {
-      return u256.Zero;
+    if (value.isZero() || basisPoints == 0) {
+      return ZERO;
     }
     const bpU256 = u256.from(basisPoints);
     const tenThousand = u256.from(10000);
@@ -122,9 +102,9 @@ export class SafeMath {
    * @returns (value * numerator) / denominator
    */
   static percentage(value: u256, numerator: u256, denominator: u256): u256 {
-    assert(denominator > u256.Zero, 'SafeMath: percentage division by zero');
-    if (value == u256.Zero || numerator == u256.Zero) {
-      return u256.Zero;
+    assert(u256.gt(denominator, ZERO), 'SafeMath: percentage division by zero');
+    if (value.isZero() || numerator.isZero()) {
+      return ZERO;
     }
     return SafeMath.div(SafeMath.mul(value, numerator), denominator);
   }
@@ -147,13 +127,13 @@ export class SafeMath {
    * Checks if a u256 is zero
    */
   static isZero(value: u256): bool {
-    return value == u256.Zero;
+    return value.isZero();
   }
 
   /**
    * Checks if a u256 is greater than zero
    */
   static isPositive(value: u256): bool {
-    return value > u256.Zero;
+    return u256.gt(value, ZERO);
   }
 }

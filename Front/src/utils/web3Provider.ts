@@ -78,7 +78,7 @@ export async function getERC20Balance(tokenAddress: string, userAddress: string)
   try {
     const args = new Args().addString(userAddress);
 
-    console.log('Fetching balance for:', { tokenAddress, userAddress });
+    // console.log('Fetching balance for:', { tokenAddress, userAddress });
 
     const result = await rpcProvider.readSC({
       target: tokenAddress,
@@ -88,13 +88,13 @@ export async function getERC20Balance(tokenAddress: string, userAddress: string)
       caller: userAddress,
     });
 
-    console.log('Read SC result:', {
-      hasValue: !!result.value,
-      valueLength: result.value?.length,
-      error: result.info?.error,
-      gasCost: result.info?.gasCost,
-      events: result.info?.events,
-    });
+    // console.log('Read SC result:', {
+    //   hasValue: !!result.value,
+    //   valueLength: result.value?.length,
+    //   error: result.info?.error,
+    //   gasCost: result.info?.gasCost,
+    //   events: result.info?.events,
+    // });
 
     // Check for errors in the result
     if (result.info?.error) {
@@ -111,7 +111,7 @@ export async function getERC20Balance(tokenAddress: string, userAddress: string)
     // Parse the result using U256.fromBytes (ERC20 returns raw U256 bytes, not Args-serialized)
     try {
       const balance = U256.fromBytes(result.value);
-      console.log('Parsed balance:', balance.toString());
+      // console.log('Parsed balance:', balance.toString());
       return balance;
     } catch (parseErr) {
       console.error('Error parsing result:', parseErr, 'Raw value:', result.value);
@@ -131,13 +131,19 @@ export async function readSmartContract(
   callerAddress?: string
 ): Promise<any> {
   try {
-    const result = await rpcProvider.readSC({
+    const params: any = {
       target: contractAddress,
       func: functionName,
       parameter: args,
       maxGas: BigInt(3_000_000_000),
-      caller: callerAddress,
-    });
+    };
+
+    // Only include caller if it's a valid non-empty address
+    if (callerAddress && callerAddress.length > 0) {
+      params.caller = callerAddress;
+    }
+
+    const result = await rpcProvider.readSC(params);
 
     return result;
   } catch (err) {

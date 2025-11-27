@@ -48,6 +48,7 @@
         "node": ">=16"
     },
     "dependencies": {
-        "@massalabs/massa-sc-deployer": "^2.2.0"
+        "@massalabs/massa-sc-deployer": "^2.2.0",
+        "as-bignum": "github:massalabs/as-bignum#0105eb596b2fa707c00712e811a2efdfcb8a9848"
     }
 }

@@ -43,11 +43,12 @@ export class IDusaPair {
 
   /**
    * Gets the bin step for this pair
-   * @returns Bin step (basis points)
+   * @returns Bin step (basis points, u16)
    */
-  getBinStep(): u64 {
+  getBinStep(): u16 {
     const result = call(this._origin, 'getBinStep', new Args(), 0);
-    return bytesToU64(result);
+    const resultArgs = new Args(result);
+    return resultArgs.nextU16().unwrap();
   }
 }
 

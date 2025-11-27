@@ -71,7 +71,7 @@ function loadConfig(): DeployConfig {
  * Deploy LendingPool contract
  */
 async function deployLendingPool(config: DeployConfig): Promise<SmartContract> {
-  console.log('\n📦 Deploying LendingPool Contract...');
+  console.log('\nDeploying LendingPool Contract...');
   console.log('Deployer:', config.publicKey);
 
   // Read compiled WASM
@@ -87,8 +87,8 @@ async function deployLendingPool(config: DeployConfig): Promise<SmartContract> {
   // Prepare constructor arguments (owner address)
   const constructorArgs = new Args().addString(config.publicKey);
 
-  console.log('📝 Contract size:', contractData.length, 'bytes');
-  console.log('⛽ Max gas:', config.maxGas.toString());
+  console.log('Contract size:', contractData.length, 'bytes');
+  console.log('Max gas:', config.maxGas.toString());
 
   // Deploy contract
   try {
@@ -107,13 +107,13 @@ async function deployLendingPool(config: DeployConfig): Promise<SmartContract> {
     //   config.rpcUrl
     // );
 
-    console.log('✅ Contract deployed successfully!');
-    console.log('📍 Address:', contract.address);
+    console.log('Contract deployed successfully!');
+    console.log('Address:', contract.address);
     // console.log('🔗 Operation ID:', contract.);
 
     return contract;
   } catch (error) {
-    console.error('❌ Deployment failed:', error);
+    console.error('Deployment failed:', error);
     throw error;
   }
 }
@@ -125,13 +125,13 @@ async function configureContract(
   contract: SmartContract,
   config: DeployConfig
 ): Promise<void> {
-  console.log('\n⚙️  Configuring LendingPool...');
+  console.log('\nConfiguring LendingPool...');
 
   // Parse supported assets from environment
   const supportedAssets = process.env.SUPPORTED_ASSETS?.split(',').filter(a => a.trim());
 
   if (supportedAssets && supportedAssets.length > 0) {
-    console.log('\n📋 Adding supported assets...');
+    console.log('\nAdding supported assets...');
 
     for (const asset of supportedAssets) {
       try {
@@ -143,9 +143,9 @@ async function configureContract(
           { maxGas: config.maxGas, coins: config.coins },
         );
 
-        console.log('  ✅ Added:', asset.trim());
+        console.log('Added:', asset.trim());
       } catch (error) {
-        console.error('  ❌ Failed to add', asset, ':', error);
+        console.error('Failed to add', asset, ':', error);
       }
     }
   }
@@ -154,7 +154,7 @@ async function configureContract(
   const initialPrices = process.env.INITIAL_PRICES?.split(',').filter(p => p.trim());
 
   if (initialPrices && initialPrices.length > 0) {
-    console.log('\n💰 Setting initial prices...');
+    console.log('\nSetting initial prices...');
 
     for (const priceEntry of initialPrices) {
       const [address, price] = priceEntry.split(':');
@@ -169,15 +169,15 @@ async function configureContract(
             args.serialize(),
             { maxGas: config.maxGas, coins: config.coins },);
 
-          console.log(`  ✅ Set price for ${address.trim()}: ${price}`);
+          console.log(`Set price for ${address.trim()}: ${price}`);
         } catch (error) {
-          console.error(`  ❌ Failed to set price for ${address}:`, error);
+          console.error(`Failed to set price for ${address}:`, error);
         }
       }
     }
   }
 
-  console.log('\n✅ Configuration complete!');
+  console.log('\nConfiguration complete!');
 }
 
 /**
@@ -197,20 +197,20 @@ function saveDeploymentInfo(addresses: ContractAddresses): void {
   const outputPath = path.join(__dirname, '../deployment-addresses.json');
   fs.writeFileSync(outputPath, JSON.stringify(deploymentInfo, null, 2));
 
-  console.log('\n📄 Deployment info saved to:', outputPath);
+  console.log('\nDeployment info saved to:', outputPath);
 }
 
 /**
  * Main deployment function
  */
 async function main() {
-  console.log('🚀 Massa Lending Pool Deployment Script\n');
+  console.log('Massa Lending Pool Deployment Script\n');
 
   try {
     // Load configuration
     const config = loadConfig();
-    console.log('✅ Configuration loaded');
-    console.log('🌐 Network:', config.rpcUrl);
+    console.log('Configuration loaded');
+    console.log('Network:', config.rpcUrl);
 
     // Deploy contract
     const lendingPool = await deployLendingPool(config);
@@ -239,28 +239,28 @@ async function main() {
     }
 
     // Print summary
-    console.log('\n🎉 Deployment Complete!\n');
+    console.log('\nDeployment Complete!\n');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📍 LendingPool Address:', lendingPool.address);
-    console.log('👤 Owner Address:', config.publicKey);
-    console.log('🌐 Network:', addresses.network);
+    console.log('LendingPool Address:', lendingPool.address);
+    console.log('Owner Address:', config.publicKey);
+    console.log('Network:', addresses.network);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-    console.log('📝 Next Steps:');
+    console.log('Next Steps:');
     console.log('1. Update Front/src/utils/constants.ts:');
-    console.log(`   export const LENDING_POOL_ADDRESS = '${lendingPool.address}';`);
+    console.log(`export const LENDING_POOL_ADDRESS = '${lendingPool.address}';`);
     console.log('\n2. Add supported assets (if not done):');
-    console.log('   massa-cli call addSupportedAsset <TOKEN_ADDRESS>');
+    console.log('massa-cli call addSupportedAsset <TOKEN_ADDRESS>');
     console.log('\n3. Set asset prices or Dusa pairs:');
-    console.log('   massa-cli call setAssetPrice <TOKEN> <PRICE>');
-    console.log('   // OR');
-    console.log('   massa-cli call setAssetPair <TOKEN> <DUSA_PAIR>');
+    console.log('massa-cli call setAssetPrice <TOKEN> <PRICE>');
+    console.log('// OR');
+    console.log('massa-cli call setAssetPair <TOKEN> <DUSA_PAIR>');
     console.log('\n4. Test the deployment:');
-    console.log('   massa-cli read getBorrowRate <TOKEN_ADDRESS>');
-    console.log('   massa-cli read getTotalCollateral <TOKEN_ADDRESS>\n');
+    console.log('massa-cli read getBorrowRate <TOKEN_ADDRESS>');
+    console.log('massa-cli read getTotalCollateral <TOKEN_ADDRESS>\n');
 
   } catch (error) {
-    console.error('\n❌ Deployment failed:', error);
+    console.error('\nDeployment failed:', error);
     process.exit(1);
   }
 }

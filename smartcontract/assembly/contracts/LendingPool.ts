@@ -517,8 +517,14 @@ function _calculateAccountHealth(user: string): AccountHealth {
     // Calculate collateral value for this asset
     const collateral = UserCollateralStorage.get(user, tokenAddress);
     if (SafeMath.isPositive(collateral)) {
+      // Get token decimals to normalize value to 18 decimals
+      const token = createTokenInterface(tokenAddress);
+      const tokenDecimals = token.decimals();
+      const tokenPrecision = u256.fromU64(10 ** tokenDecimals);
+
+      // USD Value (18 decimals) = amount * price / 10^tokenDecimals
       const collateralValue = SafeMath.mul(collateral, price);
-      const scaledCollateralValue = SafeMath.div(collateralValue, PRICE_PRECISION);
+      const scaledCollateralValue = SafeMath.div(collateralValue, tokenPrecision);
       totalCollateralValue = SafeMath.add(totalCollateralValue, scaledCollateralValue);
     }
 
@@ -557,8 +563,14 @@ function _calculateAccountHealth(user: string): AccountHealth {
         );
       }
 
+      // Get token decimals to normalize value to 18 decimals
+      const token = createTokenInterface(tokenAddress);
+      const tokenDecimals = token.decimals();
+      const tokenPrecision = u256.fromU64(10 ** tokenDecimals);
+
+      // USD Value (18 decimals) = amount * price / 10^tokenDecimals
       const debtValue = SafeMath.mul(debt, price);
-      const scaledDebtValue = SafeMath.div(debtValue, PRICE_PRECISION);
+      const scaledDebtValue = SafeMath.div(debtValue, tokenPrecision);
       totalBorrowValue = SafeMath.add(totalBorrowValue, scaledDebtValue);
     }
   }

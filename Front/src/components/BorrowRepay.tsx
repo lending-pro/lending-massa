@@ -5,42 +5,64 @@ import { DEFAULT_ASSETS, PROTOCOL_PARAMS, LENDING_POOL_ADDRESS } from '../utils/
 import { parseAmount, formatPercentage, formatAmount } from '../utils/formatting';
 
 export default function BorrowRepay() {
-  const { account } = useWallet();
-  const { borrow, repay, loading, error, getUserDebt, getTokenBalance, getAllowance, approveToken } = useLendingPool();
+  const { account, connected } = useWallet();
+  const { borrow, repay, loading, error, getUserDebt, getTokenBalance, getAllowance, approveToken, getMaxBorrow, getAccountHealth } = useLendingPool();
   const [selectedAsset, setSelectedAsset] = useState(DEFAULT_ASSETS[0]);
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState<'borrow' | 'repay'>('borrow');
   const [txStatus, setTxStatus] = useState<string>('');
   const [debt, setDebt] = useState<bigint>(0n);
   const [tokenBalance, setTokenBalance] = useState<bigint>(0n);
+  const [maxBorrowable, setMaxBorrowable] = useState<bigint>(0n);
+  const [borrowLimitUsed, setBorrowLimitUsed] = useState(0);
   const [loadingData, setLoadingData] = useState(false);
   const [allowance, setAllowance] = useState<bigint>(0n);
   const [needsApproval, setNeedsApproval] = useState(false);
 
-  // Fetch user debt, token balance, and allowance
+  // Fetch user debt, token balance, max borrow, and allowance
   useEffect(() => {
     const fetchData = async () => {
       if (!account) {
         setDebt(0n);
         setTokenBalance(0n);
+        setMaxBorrowable(0n);
+        setBorrowLimitUsed(0);
         setAllowance(0n);
         return;
       }
 
       setLoadingData(true);
       try {
-        const [userDebt, balance, allow] = await Promise.all([
+        const [userDebt, balance, allow, maxBorrow, health] = await Promise.all([
           getUserDebt(account, selectedAsset.address),
           getTokenBalance(selectedAsset.address, account),
           getAllowance(selectedAsset.address, account, LENDING_POOL_ADDRESS),
+          getMaxBorrow(account, selectedAsset.address),
+          getAccountHealth(account),
         ]);
         setDebt(userDebt);
         setTokenBalance(balance);
+        setMaxBorrowable(maxBorrow);
         setAllowance(allow);
+
+        // Calculate borrow limit used percentage
+        if (health && health.collateralValue > 0n) {
+          const maxBorrowValue = (health.collateralValue * BigInt(PROTOCOL_PARAMS.COLLATERAL_FACTOR)) / 10000n;
+          if (maxBorrowValue > 0n) {
+            const used = Number((health.debtValue * 10000n) / maxBorrowValue) / 100;
+            setBorrowLimitUsed(Math.min(used, 100));
+          } else {
+            setBorrowLimitUsed(0);
+          }
+        } else {
+          setBorrowLimitUsed(0);
+        }
       } catch (err) {
         console.error('Failed to fetch data:', err);
         setDebt(0n);
         setTokenBalance(0n);
+        setMaxBorrowable(0n);
+        setBorrowLimitUsed(0);
         setAllowance(0n);
       } finally {
         setLoadingData(false);
@@ -48,7 +70,7 @@ export default function BorrowRepay() {
     };
 
     fetchData();
-  }, [account, selectedAsset.address, getUserDebt, getTokenBalance, getAllowance]);
+  }, [account, selectedAsset.address, getUserDebt, getTokenBalance, getAllowance, getMaxBorrow, getAccountHealth]);
 
   // Check if approval is needed for repay mode
   useEffect(() => {
@@ -123,12 +145,13 @@ export default function BorrowRepay() {
       // For repay mode, set amount to min(debt, tokenBalance)
       const maxAmount = debt < tokenBalance ? debt : tokenBalance;
       setAmount(formatAmount(maxAmount, selectedAsset.decimals));
+    } else if (mode === 'borrow' && maxBorrowable > 0n) {
+      // For borrow mode, use calculated max borrowable
+      setAmount(formatAmount(maxBorrowable, selectedAsset.decimals));
     }
-    // For borrow mode, we would need to calculate max borrowing capacity
-    // which requires collateral value and oracle prices
   };
 
-  if (!account) {
+  if (!connected || !account) {
     return (
       <div className="card">
         <p className="text-center text-slate-400">Connect your wallet to borrow or repay</p>
@@ -215,30 +238,44 @@ export default function BorrowRepay() {
           </div>
           <div className="mt-1 flex justify-between text-xs text-slate-400">
             <span>
-              {mode === 'borrow' ? 'Token Balance' : 'Current debt'}: {loadingData ? '...' : formatAmount(mode === 'borrow' ? tokenBalance : debt, selectedAsset.decimals)} {selectedAsset.symbol}
+              {mode === 'borrow' ? 'Max Borrow' : 'Current debt'}: {loadingData ? '...' : formatAmount(mode === 'borrow' ? maxBorrowable : debt, selectedAsset.decimals)} {selectedAsset.symbol}
             </span>
             <span className="text-primary-400">
               APY: {formatPercentage(200)}
             </span>
           </div>
+          {mode === 'borrow' && (
+            <p className="mt-1 text-xs text-slate-500">
+              Wallet Balance: {loadingData ? '...' : formatAmount(tokenBalance, selectedAsset.decimals)} {selectedAsset.symbol}
+            </p>
+          )}
         </div>
 
         {/* Borrow Limit (only for borrow mode) */}
         {mode === 'borrow' && (
           <div className="p-4 bg-slate-900 rounded-lg border border-slate-700">
             <div className="flex justify-between items-center mb-2">
-              <span className="text-sm text-slate-400">Borrow Limit</span>
-              <span className="text-sm font-medium text-white">0%</span>
+              <span className="text-sm text-slate-400">Borrow Limit Used</span>
+              <span className={`text-sm font-medium ${
+                borrowLimitUsed >= 80 ? 'text-red-400' :
+                borrowLimitUsed >= 60 ? 'text-yellow-400' :
+                'text-green-400'
+              }`}>{borrowLimitUsed.toFixed(1)}%</span>
             </div>
             <div className="w-full bg-slate-800 rounded-full h-2">
               <div
-                className="bg-gradient-to-r from-green-500 to-yellow-500 h-2 rounded-full transition-all"
-                style={{ width: '0%' }}
+                className={`h-2 rounded-full transition-all ${
+                  borrowLimitUsed >= 80 ? 'bg-gradient-to-r from-yellow-500 to-red-500' :
+                  borrowLimitUsed >= 60 ? 'bg-gradient-to-r from-green-500 to-yellow-500' :
+                  'bg-gradient-to-r from-green-500 to-green-400'
+                }`}
+                style={{ width: `${Math.min(borrowLimitUsed, 100)}%` }}
               ></div>
             </div>
             <div className="flex justify-between mt-2 text-xs text-slate-500">
-              <span>Safe</span>
-              <span>Risky</span>
+              <span>0%</span>
+              <span className="text-yellow-500">75%</span>
+              <span className="text-red-500">100%</span>
             </div>
           </div>
         )}

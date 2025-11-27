@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react';
 import { useWallet, Args } from '../contexts/WalletContext';
-import { LENDING_POOL_ADDRESS } from '../utils/constants';
+import { LENDING_POOL_ADDRESS, DEFAULT_ASSETS, PROTOCOL_PARAMS } from '../utils/constants';
 import { UserPosition } from '../types';
-import { getERC20Balance, getERC20Allowance, readSmartContract, readStorageKeys, storageToU256 } from '../utils/web3Provider';
+import { getERC20Balance, getERC20Allowance, readSmartContract } from '../utils/web3Provider';
+import { saveTransaction } from '../components/TransactionHistory';
 
 export function useLendingPool() {
   const { account, callContract } = useWallet();
@@ -21,20 +22,30 @@ export function useLendingPool() {
       setLoading(true);
       setError(null);
       try {
-        console.log('Depositing collateral:', {
-          tokenAddress,
+        const args = new Args().addString(tokenAddress).addU256(amount);
+        const result = await callContract(LENDING_POOL_ADDRESS, 'depositCollateral', args);
+
+        // Save transaction
+        saveTransaction({
+          type: 'deposit',
+          asset: tokenAddress,
           amount: amount.toString(),
-          lendingPool: LENDING_POOL_ADDRESS,
+          timestamp: Date.now(),
+          txHash: result?.id || `tx_${Date.now()}`,
+          status: 'success',
         });
 
-        const args = new Args().addString(tokenAddress).addU256(amount);
-        console.log('Serialized args:', Array.from(args.serialize()));
-
-        const result = await callContract(LENDING_POOL_ADDRESS, 'depositCollateral', args);
-        console.log('Deposit result:', result);
         return result;
       } catch (err) {
         console.error('Deposit error details:', err);
+        saveTransaction({
+          type: 'deposit',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: `failed_${Date.now()}`,
+          status: 'failed',
+        });
         handleError(err, 'deposit collateral');
       } finally {
         setLoading(false);
@@ -50,8 +61,26 @@ export function useLendingPool() {
       try {
         const args = new Args().addString(tokenAddress).addU256(amount);
         const result = await callContract(LENDING_POOL_ADDRESS, 'withdrawCollateral', args);
+
+        saveTransaction({
+          type: 'withdraw',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: result?.id || `tx_${Date.now()}`,
+          status: 'success',
+        });
+
         return result;
       } catch (err) {
+        saveTransaction({
+          type: 'withdraw',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: `failed_${Date.now()}`,
+          status: 'failed',
+        });
         handleError(err, 'withdraw collateral');
       } finally {
         setLoading(false);
@@ -67,8 +96,26 @@ export function useLendingPool() {
       try {
         const args = new Args().addString(tokenAddress).addU256(amount);
         const result = await callContract(LENDING_POOL_ADDRESS, 'borrow', args);
+
+        saveTransaction({
+          type: 'borrow',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: result?.id || `tx_${Date.now()}`,
+          status: 'success',
+        });
+
         return result;
       } catch (err) {
+        saveTransaction({
+          type: 'borrow',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: `failed_${Date.now()}`,
+          status: 'failed',
+        });
         handleError(err, 'borrow');
       } finally {
         setLoading(false);
@@ -84,8 +131,26 @@ export function useLendingPool() {
       try {
         const args = new Args().addString(tokenAddress).addU256(amount);
         const result = await callContract(LENDING_POOL_ADDRESS, 'repay', args);
+
+        saveTransaction({
+          type: 'repay',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: result?.id || `tx_${Date.now()}`,
+          status: 'success',
+        });
+
         return result;
       } catch (err) {
+        saveTransaction({
+          type: 'repay',
+          asset: tokenAddress,
+          amount: amount.toString(),
+          timestamp: Date.now(),
+          txHash: `failed_${Date.now()}`,
+          status: 'failed',
+        });
         handleError(err, 'repay');
       } finally {
         setLoading(false);
@@ -110,8 +175,26 @@ export function useLendingPool() {
           .addString(debtToken)
           .addU256(debtAmount);
         const result = await callContract(LENDING_POOL_ADDRESS, 'liquidate', args);
+
+        saveTransaction({
+          type: 'liquidate',
+          asset: debtToken,
+          amount: debtAmount.toString(),
+          timestamp: Date.now(),
+          txHash: result?.id || `tx_${Date.now()}`,
+          status: 'success',
+        });
+
         return result;
       } catch (err) {
+        saveTransaction({
+          type: 'liquidate',
+          asset: debtToken,
+          amount: debtAmount.toString(),
+          timestamp: Date.now(),
+          txHash: `failed_${Date.now()}`,
+          status: 'failed',
+        });
         handleError(err, 'liquidate');
       } finally {
         setLoading(false);
@@ -123,21 +206,24 @@ export function useLendingPool() {
   const getUserCollateral = useCallback(
     async (userAddress: string, tokenAddress: string): Promise<bigint> => {
       try {
-        // Read from storage directly: user_collateral:{userAddress}:{tokenAddress}
-        const key = `user_collateral:${userAddress}:${tokenAddress}`;
-        const results = await readStorageKeys(LENDING_POOL_ADDRESS, [key]);
+        // Call the smart contract's getUserCollateral function
+        const args = new Args().addString(userAddress).addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getUserCollateral', args, userAddress);
 
-        console.log('getUserCollateral storage read:', {
-          key,
-          hasData: !!results[0],
-          dataLength: results[0]?.length,
-          data: results[0] ? Array.from(results[0]) : [],
-        });
+        // console.log('getUserCollateral SC read:', {
+        //   userAddress,
+        //   tokenAddress,
+        //   hasValue: !!result?.value,
+        //   valueLength: result?.value?.length,
+        // });
 
-        const value = storageToU256(results[0]);
-        console.log('getUserCollateral parsed value:', value.toString());
-
-        return value;
+        if (result?.value && result.value.length > 0) {
+          const resultArgs = new Args(result.value);
+          const value = resultArgs.nextU256();
+          // console.log('getUserCollateral parsed value:', value.toString());
+          return value;
+        }
+        return 0n;
       } catch (err) {
         console.error('Get user collateral error:', err);
         return 0n;
@@ -149,20 +235,24 @@ export function useLendingPool() {
   const getUserDebt = useCallback(
     async (userAddress: string, tokenAddress: string): Promise<bigint> => {
       try {
-        // Read from storage directly: user_debt:{userAddress}:{tokenAddress}
-        const key = `user_debt:${userAddress}:${tokenAddress}`;
-        const results = await readStorageKeys(LENDING_POOL_ADDRESS, [key]);
+        // Call the smart contract's getUserDebt function
+        const args = new Args().addString(userAddress).addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getUserDebt', args, userAddress);
 
-        console.log('getUserDebt storage read:', {
-          key,
-          hasData: !!results[0],
-          dataLength: results[0]?.length,
-        });
+        // console.log('getUserDebt SC read:', {
+        //   userAddress,
+        //   tokenAddress,
+        //   hasValue: !!result?.value,
+        //   valueLength: result?.value?.length,
+        // });
 
-        const value = storageToU256(results[0]);
-        console.log('getUserDebt parsed value:', value.toString());
-
-        return value;
+        if (result?.value && result.value.length > 0) {
+          const resultArgs = new Args(result.value);
+          const value = resultArgs.nextU256();
+          // console.log('getUserDebt parsed value:', value.toString());
+          return value;
+        }
+        return 0n;
       } catch (err) {
         console.error('Get user debt error:', err);
         return 0n;
@@ -174,14 +264,19 @@ export function useLendingPool() {
   const getBorrowRate = useCallback(
     async (tokenAddress: string): Promise<number> => {
       try {
-        // getBorrowRate is calculated dynamically, not stored
-        // For now, return a hardcoded rate of 200 basis points (2%)
-        // TODO: Calculate client-side using utilization and interest rate model parameters
-        console.log('getBorrowRate: returning hardcoded 200 basis points (2%) for', tokenAddress);
-        return 200; // 2% APR
+        const args = new Args().addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getBorrowRate', args);
+
+        if (result?.value && result.value.length >= 4) {
+          const resultArgs = new Args(result.value);
+          const rate = resultArgs.nextU32();
+          // console.log('getBorrowRate for', tokenAddress, ':', rate, 'basis points');
+          return Number(rate);
+        }
+        return 200; // fallback to 2% APR
       } catch (err) {
         console.error('Get borrow rate error:', err);
-        return 0;
+        return 200; // fallback to 2% APR
       }
     },
     []
@@ -194,12 +289,19 @@ export function useLendingPool() {
         const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getAccountHealth', args, userAddress);
 
         if (result && result.value && result.value.length > 0) {
-          // SC uses .add() which serializes each value as string
+          // SC returns: totalCollateralValue (u256), totalBorrowValue (u256), healthFactor (u256), isHealthy (bool)
           const resultArgs = new Args(result.value);
-          const collateralValue = BigInt(resultArgs.nextString());
-          const debtValue = BigInt(resultArgs.nextString());
-          const healthFactor = BigInt(resultArgs.nextString());
+          const collateralValue = resultArgs.nextU256();
+          const debtValue = resultArgs.nextU256();
+          const healthFactor = resultArgs.nextU256();
           const isHealthy = resultArgs.nextBool();
+
+          // console.log('getAccountHealth:', {
+          //   collateralValue: collateralValue.toString(),
+          //   debtValue: debtValue.toString(),
+          //   healthFactor: healthFactor.toString(),
+          //   isHealthy,
+          // });
 
           return {
             collateralValue,
@@ -217,55 +319,26 @@ export function useLendingPool() {
     []
   );
 
-  const getUserPosition = useCallback(
-    async (tokenAddress: string): Promise<UserPosition | null> => {
-      if (!account) return null;
-
-      try {
-        const [collateral, debt] = await Promise.all([
-          getUserCollateral(account, tokenAddress),
-          getUserDebt(account, tokenAddress),
-        ]);
-
-        // Get account health for complete info
-        const health = await getAccountHealth(account);
-
-        return {
-          collateral: collateral.toString(),
-          debt: debt.toString(),
-          collateralValue: health?.collateralValue.toString() || '0',
-          debtValue: health?.debtValue.toString() || '0',
-          healthFactor: health?.healthFactor.toString() || '0',
-          maxBorrow: '0', // TODO: Calculate based on collateral factor
-          availableWithdraw: '0', // TODO: Calculate based on health factor
-        };
-      } catch (err) {
-        console.error('Get user position error:', err);
-        return null;
-      }
-    },
-    [account, getUserCollateral, getUserDebt, getAccountHealth]
-  );
-
   const getTotalCollateral = useCallback(
     async (tokenAddress: string): Promise<bigint> => {
       try {
-        // Read from storage directly: total_collateral:{tokenAddress}
-        const key = `total_collateral:${tokenAddress}`;
-        const results = await readStorageKeys(LENDING_POOL_ADDRESS, [key]);
+        // Call the smart contract's getTotalCollateral function
+        const args = new Args().addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getTotalCollateral', args);
 
-        console.log('getTotalCollateral storage read:', {
-          key,
-          tokenAddress,
-          hasData: !!results[0],
-          dataLength: results[0]?.length,
-          data: results[0] ? Array.from(results[0]) : [],
-        });
+        // console.log('getTotalCollateral SC read:', {
+        //   tokenAddress,
+        //   hasValue: !!result?.value,
+        //   valueLength: result?.value?.length,
+        // });
 
-        const value = storageToU256(results[0]);
-        console.log('getTotalCollateral parsed value:', value.toString());
-
-        return value;
+        if (result?.value && result.value.length > 0) {
+          const resultArgs = new Args(result.value);
+          const value = resultArgs.nextU256();
+          // console.log('getTotalCollateral parsed value:', value.toString());
+          return value;
+        }
+        return 0n;
       } catch (err) {
         console.error('Get total collateral error:', err);
         return 0n;
@@ -277,21 +350,23 @@ export function useLendingPool() {
   const getTotalBorrows = useCallback(
     async (tokenAddress: string): Promise<bigint> => {
       try {
-        // Read from storage directly: total_borrows:{tokenAddress}
-        const key = `total_borrows:${tokenAddress}`;
-        const results = await readStorageKeys(LENDING_POOL_ADDRESS, [key]);
+        // Call the smart contract's getTotalBorrows function
+        const args = new Args().addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getTotalBorrows', args);
 
-        console.log('getTotalBorrows storage read:', {
-          key,
-          tokenAddress,
-          hasData: !!results[0],
-          dataLength: results[0]?.length,
-        });
+        // console.log('getTotalBorrows SC read:', {
+        //   tokenAddress,
+        //   hasValue: !!result?.value,
+        //   valueLength: result?.value?.length,
+        // });
 
-        const value = storageToU256(results[0]);
-        console.log('getTotalBorrows parsed value:', value.toString());
-
-        return value;
+        if (result?.value && result.value.length > 0) {
+          const resultArgs = new Args(result.value);
+          const value = resultArgs.nextU256();
+          // console.log('getTotalBorrows parsed value:', value.toString());
+          return value;
+        }
+        return 0n;
       } catch (err) {
         console.error('Get total borrows error:', err);
         return 0n;
@@ -302,38 +377,79 @@ export function useLendingPool() {
 
   const getAssetPrice = useCallback(
     async (tokenAddress: string): Promise<bigint> => {
-      //       if (tokenAddress == 'AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ') return 1000000000000000000n
-      // try {
-      //   const args = new Args().addString(tokenAddress);
-      //   const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getAssetPrice', args);
+      try {
+        const args = new Args().addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getAssetPrice', args);
 
-      //   if (result && result.value) {
-      //     const resultArgs = new Args(result.value);
-      //     const price = BigInt(resultArgs.nextU256());
+        if (result?.value && result.value.length > 0) {
+          const resultArgs = new Args(result.value);
+          const price = resultArgs.nextU256();
+          // console.log('getAssetPrice for', tokenAddress, ':', price.toString());
 
-      //     if (price === 0n) {
-      //       console.warn(`Price oracle returned 0 for token: ${tokenAddress}. Oracle may not be configured.`);
-      //     }
+          if (price > 0n) {
+            return price;
+          }
+        }
+      } catch (err) {
+        console.error('Get asset price error:', err);
+      }
 
-      //     return price;
-      //   }
-      //   return 0n;
-      // } catch (err) {
-      //   console.error('Get asset price error:', err);
-      //   return 0n;
-      // }
-      // Hardcoded prices - oracle not configured yet
-      // USDC = $1, WMAS = $0.10, WETH = $2500 (update these as needed)
+      // Fallback to hardcoded prices if contract returns 0 or fails
       const PRICES: { [key: string]: bigint } = {
         'AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ': 1000000000000000000n, // USDC = $1
-        'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU': 100000000000000000n,  // WMAS = $0.10
+        'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU': 190000000000000000n,  // WMAS = $0.19
         'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk': 2500000000000000000000n, // WETH = $2500
       };
 
-      // Return hardcoded price directly (oracle not set up)
       return PRICES[tokenAddress] || 0n;
     },
     []
+  );
+
+  const getUserPosition = useCallback(
+    async (tokenAddress: string): Promise<UserPosition | null> => {
+      if (!account) return null;
+
+      try {
+        const [collateral, debt, price] = await Promise.all([
+          getUserCollateral(account, tokenAddress),
+          getUserDebt(account, tokenAddress),
+          getAssetPrice(tokenAddress),
+        ]);
+
+        // Get token decimals from DEFAULT_ASSETS
+        const asset = DEFAULT_ASSETS.find((a: { address: string }) => a.address === tokenAddress);
+        const decimals = asset?.decimals || 18;
+
+        // Calculate per-asset USD values (price is 18 decimals, result should be 18 decimals)
+        // USD Value = amount * price / 10^tokenDecimals
+        const tokenPrecision = BigInt(10 ** decimals);
+        const collateralValue = (collateral * price) / tokenPrecision;
+        const debtValue = (debt * price) / tokenPrecision;
+
+        // Calculate max borrow (75% of collateral value)
+        const maxBorrowValue = (collateralValue * 75n) / 100n;
+        // Convert back to token amount: maxBorrowTokens = maxBorrowValue * 10^decimals / price
+        const maxBorrow = price > 0n ? (maxBorrowValue * tokenPrecision) / price : 0n;
+
+        // Get account health for health factor
+        const health = await getAccountHealth(account);
+
+        return {
+          collateral: collateral.toString(),
+          debt: debt.toString(),
+          collateralValue: collateralValue.toString(),
+          debtValue: debtValue.toString(),
+          healthFactor: health?.healthFactor.toString() || '0',
+          maxBorrow: maxBorrow.toString(),
+          availableWithdraw: '0', // TODO: Calculate based on health factor
+        };
+      } catch (err) {
+        console.error('Get user position error:', err);
+        return null;
+      }
+    },
+    [account, getUserCollateral, getUserDebt, getAssetPrice, getAccountHealth]
   );
 
   const getMarketInfo = useCallback(
@@ -418,7 +534,7 @@ export function useLendingPool() {
       try {
         const args = new Args().addString(spenderAddress).addU256(amount);
         const result = await callContract(tokenAddress, 'increaseAllowance', args);
-        console.log('Approval result:', result);
+        // console.log('Approval result:', result);
         return result;
       } catch (err) {
         handleError(err, 'approve token');
@@ -427,6 +543,146 @@ export function useLendingPool() {
       }
     },
     [callContract]
+  );
+
+  // Calculate maximum borrowable amount for a specific asset
+  // maxBorrow = (totalCollateralValue * collateralFactor / 10000 - totalDebtValue) * tokenPrecision / tokenPrice
+  const getMaxBorrow = useCallback(
+    async (userAddress: string, tokenAddress: string): Promise<bigint> => {
+      try {
+        // Get account health to get total collateral and debt values
+        const health = await getAccountHealth(userAddress);
+        if (!health) return 0n;
+
+        const { collateralValue, debtValue } = health;
+
+        // Calculate available borrow capacity in USD (18 decimals)
+        // availableUSD = collateralValue * collateralFactor / 10000 - debtValue
+        const collateralFactor = BigInt(PROTOCOL_PARAMS.COLLATERAL_FACTOR);
+        const maxBorrowValueUSD = (collateralValue * collateralFactor) / 10000n - debtValue;
+
+        if (maxBorrowValueUSD <= 0n) return 0n;
+
+        // Get token price and decimals
+        const price = await getAssetPrice(tokenAddress);
+        if (price <= 0n) return 0n;
+
+        const asset = DEFAULT_ASSETS.find(a => a.address === tokenAddress);
+        const decimals = asset?.decimals || 18;
+        const tokenPrecision = BigInt(10 ** decimals);
+
+        // Convert USD value to token amount
+        // maxBorrowTokens = maxBorrowValueUSD * tokenPrecision / price
+        const maxBorrowTokens = (maxBorrowValueUSD * tokenPrecision) / price;
+
+        // Also check pool liquidity
+        const totalCollateral = await getTotalCollateral(tokenAddress);
+        const totalBorrows = await getTotalBorrows(tokenAddress);
+        const availableLiquidity = totalCollateral > totalBorrows ? totalCollateral - totalBorrows : 0n;
+
+        // Return minimum of calculated max and available liquidity
+        return maxBorrowTokens < availableLiquidity ? maxBorrowTokens : availableLiquidity;
+      } catch (err) {
+        console.error('Get max borrow error:', err);
+        return 0n;
+      }
+    },
+    [getAccountHealth, getAssetPrice, getTotalCollateral, getTotalBorrows]
+  );
+
+  // Calculate maximum withdrawable amount while keeping health factor > 1.1
+  // Contract requires HF > 1.1 after withdrawal
+  // HF = (collateralValue * liquidationThreshold / 10000) / debtValue
+  // For HF > 1.1: collateralValue > debtValue * 11000 / liquidationThreshold
+  const getMaxWithdraw = useCallback(
+    async (userAddress: string, tokenAddress: string): Promise<bigint> => {
+      try {
+        // Get user's collateral for this asset
+        const userCollateral = await getUserCollateral(userAddress, tokenAddress);
+        if (userCollateral <= 0n) return 0n;
+
+        // Get account health
+        const health = await getAccountHealth(userAddress);
+        if (!health) return userCollateral; // No debt, can withdraw all
+
+        const { collateralValue, debtValue } = health;
+
+        // If no debt, can withdraw all
+        if (debtValue <= 0n) return userCollateral;
+
+        // Calculate minimum collateral value needed to maintain HF > 1.1
+        // minCollateralValue = debtValue * 11000 / liquidationThreshold
+        // (11000 = 10000 * 1.1 for the 1.1 HF requirement)
+        const liquidationThreshold = BigInt(PROTOCOL_PARAMS.LIQUIDATION_THRESHOLD);
+        const minCollateralValue = (debtValue * 11000n) / liquidationThreshold;
+
+        // Add 1% safety buffer for interest accrual and rounding
+        const safetyBuffer = minCollateralValue / 100n;
+        const safeMinCollateralValue = minCollateralValue + safetyBuffer;
+
+        // Max withdrawable value in USD (with safety margin)
+        const maxWithdrawValueUSD = collateralValue > safeMinCollateralValue
+          ? collateralValue - safeMinCollateralValue
+          : 0n;
+
+        if (maxWithdrawValueUSD <= 0n) return 0n;
+
+        // Get token price and decimals
+        const price = await getAssetPrice(tokenAddress);
+        if (price <= 0n) return 0n;
+
+        const asset = DEFAULT_ASSETS.find(a => a.address === tokenAddress);
+        const decimals = asset?.decimals || 18;
+        const tokenPrecision = BigInt(10 ** decimals);
+
+        // Convert USD value to token amount
+        const maxWithdrawTokens = (maxWithdrawValueUSD * tokenPrecision) / price;
+
+        // Can't withdraw more than deposited
+        return maxWithdrawTokens < userCollateral ? maxWithdrawTokens : userCollateral;
+      } catch (err) {
+        console.error('Get max withdraw error:', err);
+        return 0n;
+      }
+    },
+    [getUserCollateral, getAccountHealth, getAssetPrice]
+  );
+
+  // Get all positions for multi-asset collateral view
+  const getAllPositions = useCallback(
+    async (userAddress: string) => {
+      try {
+        const positions = await Promise.all(
+          DEFAULT_ASSETS.map(async (asset) => {
+            const [collateral, debt, price] = await Promise.all([
+              getUserCollateral(userAddress, asset.address),
+              getUserDebt(userAddress, asset.address),
+              getAssetPrice(asset.address),
+            ]);
+
+            const tokenPrecision = BigInt(10 ** asset.decimals);
+            const collateralValueUSD = price > 0n ? (collateral * price) / tokenPrecision : 0n;
+            const debtValueUSD = price > 0n ? (debt * price) / tokenPrecision : 0n;
+
+            return {
+              asset,
+              collateral,
+              debt,
+              collateralValueUSD,
+              debtValueUSD,
+              price,
+            };
+          })
+        );
+
+        // Filter out positions with no activity
+        return positions.filter(p => p.collateral > 0n || p.debt > 0n);
+      } catch (err) {
+        console.error('Get all positions error:', err);
+        return [];
+      }
+    },
+    [getUserCollateral, getUserDebt, getAssetPrice]
   );
 
   return {
@@ -449,6 +705,9 @@ export function useLendingPool() {
     getTokenBalance,
     getAllowance,
     approveToken,
+    getMaxBorrow,
+    getMaxWithdraw,
+    getAllPositions,
   };
 }
 

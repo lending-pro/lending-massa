@@ -1,17 +1,101 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '../contexts/WalletContext';
 import { useLendingPool } from '../hooks/useLendingPool';
 import { DEFAULT_ASSETS, PROTOCOL_PARAMS } from '../utils/constants';
 import { parseAmount, formatAmount, formatPercentage, shortenAddress } from '../utils/formatting';
 import { LiquidationCandidate } from '../types';
+import HealthFactorGauge from './HealthFactorGauge';
 
 export default function Liquidations() {
-  const { account } = useWallet();
-  const { liquidate, loading } = useLendingPool();
-  const [liquidationCandidates] = useState<LiquidationCandidate[]>([]);
+  const { account, connected } = useWallet();
+  const { liquidate, loading, getAccountHealth, getUserCollateral, getUserDebt } = useLendingPool();
+  const [liquidationCandidates, setLiquidationCandidates] = useState<LiquidationCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<LiquidationCandidate | null>(null);
   const [repayAmount, setRepayAmount] = useState('');
   const [txStatus, setTxStatus] = useState<string>('');
+  const [checkAddress, setCheckAddress] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [userHealth, setUserHealth] = useState<{
+    collateralValue: bigint;
+    debtValue: bigint;
+    healthFactor: bigint;
+    isHealthy: boolean;
+  } | null>(null);
+
+  // Load user's own health status
+  const loadUserHealth = useCallback(async () => {
+    if (!account) return;
+    const health = await getAccountHealth(account);
+    setUserHealth(health);
+  }, [account, getAccountHealth]);
+
+  useEffect(() => {
+    if (connected && account) {
+      loadUserHealth();
+    }
+  }, [connected, account, loadUserHealth]);
+
+  // Check if an address is liquidatable
+  const checkAddressForLiquidation = async () => {
+    if (!checkAddress.trim()) return;
+
+    setChecking(true);
+    setTxStatus('');
+
+    try {
+      const health = await getAccountHealth(checkAddress.trim());
+
+      if (!health) {
+        setTxStatus('Could not retrieve health data for this address.');
+        setChecking(false);
+        return;
+      }
+
+      if (health.isHealthy) {
+        setTxStatus(`Position is healthy (Health Factor: ${formatAmount(health.healthFactor, 18, 2)}). Cannot liquidate.`);
+        setChecking(false);
+        return;
+      }
+
+      // Position is unhealthy - gather details for all assets
+      const candidates: LiquidationCandidate[] = [];
+
+      for (const collateralAsset of DEFAULT_ASSETS) {
+        const collateral = await getUserCollateral(checkAddress.trim(), collateralAsset.address);
+        if (collateral <= 0n) continue;
+
+        for (const debtAsset of DEFAULT_ASSETS) {
+          const debt = await getUserDebt(checkAddress.trim(), debtAsset.address);
+          if (debt <= 0n) continue;
+
+          candidates.push({
+            borrower: checkAddress.trim(),
+            collateralToken: collateralAsset.address,
+            debtToken: debtAsset.address,
+            collateralAmount: collateral.toString(),
+            debtAmount: debt.toString(),
+            healthFactor: formatAmount(health.healthFactor, 18, 2),
+          });
+        }
+      }
+
+      if (candidates.length > 0) {
+        setLiquidationCandidates(prev => {
+          // Remove existing entries for this borrower and add new ones
+          const filtered = prev.filter(c => c.borrower !== checkAddress.trim());
+          return [...filtered, ...candidates];
+        });
+        setTxStatus(`Found ${candidates.length} liquidation opportunity(ies) for this address!`);
+      } else {
+        setTxStatus('Position is unhealthy but no collateral/debt positions found.');
+      }
+    } catch (err) {
+      console.error('Error checking address:', err);
+      setTxStatus('Error checking address. Please verify it is a valid Massa address.');
+    }
+
+    setChecking(false);
+  };
 
   const handleLiquidate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +123,7 @@ export default function Liquidations() {
     }
   };
 
-  if (!account) {
+  if (!connected || !account) {
     return (
       <div className="card">
         <p className="text-center text-slate-400">Connect your wallet to participate in liquidations</p>
@@ -47,8 +131,40 @@ export default function Liquidations() {
     );
   }
 
+  // Calculate user's health factor for display
+  const userHealthFactor = userHealth
+    ? formatAmount(userHealth.healthFactor, 18, 2)
+    : '∞';
+
   return (
     <div className="space-y-6">
+      {/* User's Own Health Status */}
+      {userHealth && userHealth.debtValue > 0n && (
+        <div className={`card ${!userHealth.isHealthy ? 'border-red-500 bg-red-900/10' : ''}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-2">Your Position Health</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-slate-400">Collateral Value</p>
+                  <p className="text-white font-medium">${formatAmount(userHealth.collateralValue, 18, 2)}</p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Debt Value</p>
+                  <p className="text-white font-medium">${formatAmount(userHealth.debtValue, 18, 2)}</p>
+                </div>
+              </div>
+              {!userHealth.isHealthy && (
+                <div className="mt-3 p-2 bg-red-900/30 rounded text-red-400 text-sm">
+                  Your position is at risk of liquidation. Consider repaying some debt or adding collateral.
+                </div>
+              )}
+            </div>
+            <HealthFactorGauge healthFactor={userHealthFactor} size="md" />
+          </div>
+        </div>
+      )}
+
       {/* Info Banner */}
       <div className="bg-yellow-900/20 border border-yellow-800 rounded-lg p-4">
         <div className="flex items-start space-x-3">
@@ -62,6 +178,40 @@ export default function Liquidations() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Check Address Form */}
+      <div className="card">
+        <h3 className="text-lg font-semibold text-white mb-4">Check Address for Liquidation</h3>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={checkAddress}
+            onChange={(e) => setCheckAddress(e.target.value)}
+            placeholder="Enter Massa address (AS...)"
+            className="input-field flex-1"
+          />
+          <button
+            onClick={checkAddressForLiquidation}
+            disabled={checking || !checkAddress.trim()}
+            className="btn-primary px-6"
+          >
+            {checking ? (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Checking...
+              </span>
+            ) : 'Check'}
+          </button>
+        </div>
+        {txStatus && !selectedCandidate && (
+          <p className={`mt-3 text-sm ${txStatus.includes('Found') ? 'text-green-400' : txStatus.includes('healthy') ? 'text-yellow-400' : 'text-red-400'}`}>
+            {txStatus}
+          </p>
+        )}
       </div>
 
       {/* Liquidation Candidates */}
@@ -124,12 +274,21 @@ export default function Liquidations() {
                         </span>
                       </td>
                       <td className="py-4 px-4 text-right">
-                        <button
-                          onClick={() => setSelectedCandidate(candidate)}
-                          className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors"
-                        >
-                          Liquidate
-                        </button>
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => setSelectedCandidate(candidate)}
+                            className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors"
+                          >
+                            Liquidate
+                          </button>
+                          <button
+                            onClick={() => setLiquidationCandidates(prev => prev.filter(c => c !== candidate))}
+                            className="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+                            title="Remove"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -36,7 +36,7 @@ const ORACLE_PAIRS: OraclePairConfig[] = [
 ];
 
 async function configureOraclePairs() {
-  console.log('🔮 Configuring Dusa Oracle Pairs\n');
+  console.log('Configuring Dusa Oracle Pairs\n');
 
   // Load config
   const privateKey = process.env.DEPLOYER_PRIVATE_KEY;
@@ -51,20 +51,20 @@ async function configureOraclePairs() {
     throw new Error('LENDING_POOL_ADDRESS not set');
   }
 
-  console.log('📍 LendingPool:', lendingPoolAddress);
-  console.log('👤 Admin:', account.address);
+  console.log('LendingPool:', lendingPoolAddress);
+  console.log('Admin:', account.address);
   console.log('');
 
   // Configure each pair
   for (const pair of ORACLE_PAIRS) {
     if (!pair.tokenAddress || !pair.dusaPairAddress) {
-      console.log(`⏭️  Skipping ${pair.tokenSymbol} (not configured)\n`);
+      console.log(`Skipping ${pair.tokenSymbol} (not configured)\n`);
       continue;
     }
 
-    console.log(`🔄 Configuring ${pair.tokenSymbol}...`);
-    console.log(`   Token: ${pair.tokenAddress}`);
-    console.log(`   Dusa Pair: ${pair.dusaPairAddress}`);
+    console.log(`Configuring ${pair.tokenSymbol}...`);
+    console.log(`Token: ${pair.tokenAddress}`);
+    console.log(`Dusa Pair: ${pair.dusaPairAddress}`);
 
     try {
       const args = new Args()
@@ -78,22 +78,22 @@ async function configureOraclePairs() {
         {maxGas: BigInt(2_000_000_000), coins: BigInt(0)}
       );
 
-      console.log(`   ✅ Pair configured\n`);
+      console.log(`Pair configured\n`);
     } catch (error) {
-      console.error(`   ❌ Failed:`, error, '\n');
+      console.error(`Failed:`, error, '\n');
     }
   }
 
-  console.log('✅ Oracle configuration complete!\n');
-  console.log('📝 Next steps:');
+  console.log('Oracle configuration complete!\n');
+  console.log('Next steps:');
   console.log('1. Verify oracle prices:');
-  console.log('   massa-cli read getAssetPrice <TOKEN_ADDRESS>');
+  console.log('massa-cli read getAssetPrice <TOKEN_ADDRESS>');
   console.log('\n2. Optional: Set TWAP period (default 5 minutes):');
-  console.log('   massa-cli call setTWAPPeriod <SECONDS>');
+  console.log('massa-cli call setTWAPPeriod <SECONDS>');
   console.log('');
 }
 
 configureOraclePairs().catch((error) => {
-  console.error('❌ Configuration failed:', error);
+  console.error('Configuration failed:', error);
   process.exit(1);
 });

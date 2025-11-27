@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { WalletProvider } from './contexts/WalletContext';
+import { useState, useEffect, useCallback } from 'react';
+import { WalletProvider, useWallet } from './contexts/WalletContext';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import DepositWithdraw from './components/DepositWithdraw';
@@ -22,46 +22,56 @@ interface MarketData {
   availableUSD: bigint;
   utilization: number;
   loading: boolean;
+  price?: bigint;
 }
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [marketData, setMarketData] = useState<MarketData[]>([]);
   const [oracleConfigured, setOracleConfigured] = useState(true);
+  const [marketLoading, setMarketLoading] = useState(true);
   const { getMarketInfo } = useLendingPool();
+  const { account } = useWallet();
 
+  const loadMarketData = useCallback(async () => {
+    setMarketLoading(true);
+    try {
+      const data = await Promise.all(
+        DEFAULT_ASSETS.map(async (asset) => {
+          const info = await getMarketInfo(asset.address, asset.decimals);
+          return {
+            symbol: asset.symbol,
+            name: asset.name,
+            address: asset.address,
+            decimals: asset.decimals,
+            supplyAPY: info?.supplyAPY || 0,
+            borrowAPY: info?.borrowAPY || 0,
+            tvlUSD: info?.tvlUSD || 0n,
+            availableUSD: info?.availableUSD || 0n,
+            utilization: info?.utilization || 0,
+            loading: false,
+            price: info?.price || 0n,
+          };
+        })
+      );
+      setMarketData(data);
+
+      // Check if oracle is configured (all prices are 0)
+      const allPricesZero = data.every(d => d.price === 0n);
+      setOracleConfigured(!allPricesZero);
+    } catch (err) {
+      console.error('Failed to load market data:', err);
+    } finally {
+      setMarketLoading(false);
+    }
+  }, [getMarketInfo]);
+
+  // Load market data on mount and when account changes
   useEffect(() => {
     loadMarketData();
     const interval = setInterval(loadMarketData, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadMarketData = async () => {
-    const data = await Promise.all(
-      DEFAULT_ASSETS.map(async (asset) => {
-        const info = await getMarketInfo(asset.address, asset.decimals);
-        return {
-          symbol: asset.symbol,
-          name: asset.name,
-          address: asset.address,
-          decimals: asset.decimals,
-          supplyAPY: info?.supplyAPY || 0,
-          borrowAPY: info?.borrowAPY || 0,
-          tvlUSD: info?.tvlUSD || 0n,
-          availableUSD: info?.availableUSD || 0n,
-          utilization: info?.utilization || 0,
-          loading: false,
-          price: info?.price || 0n,
-        };
-      })
-    );
-    setMarketData(data);
-
-    // Check if oracle is configured (all prices are 0)
-    const allPricesZero = data.every(d => d.price === 0n);
-    setOracleConfigured(!allPricesZero);
-  };
+  }, [loadMarketData, account]);
 
   const tabs = [
     { id: 'dashboard' as Tab, name: 'Dashboard', icon: '📊' },
@@ -117,9 +127,20 @@ function AppContent() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <DepositWithdraw />
               <div className="card">
-                <h3 className="text-xl font-semibold text-white mb-4">Supply Markets</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-semibold text-white">Supply Markets</h3>
+                  <button
+                    onClick={loadMarketData}
+                    disabled={marketLoading}
+                    className="flex items-center space-x-1 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    <svg className={`w-4 h-4 ${marketLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </div>
                 <div className="space-y-3">
-                  {marketData.length === 0 ? (
+                  {marketLoading && marketData.length === 0 ? (
                     <div className="text-center py-8">
                       <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
                       <p className="mt-2 text-sm text-slate-400">Loading markets...</p>
@@ -160,9 +181,20 @@ function AppContent() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <BorrowRepay />
               <div className="card">
-                <h3 className="text-xl font-semibold text-white mb-4">Borrow Markets</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-semibold text-white">Borrow Markets</h3>
+                  <button
+                    onClick={loadMarketData}
+                    disabled={marketLoading}
+                    className="flex items-center space-x-1 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    <svg className={`w-4 h-4 ${marketLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </div>
                 <div className="space-y-3">
-                  {marketData.length === 0 ? (
+                  {marketLoading && marketData.length === 0 ? (
                     <div className="text-center py-8">
                       <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
                       <p className="mt-2 text-sm text-slate-400">Loading markets...</p>

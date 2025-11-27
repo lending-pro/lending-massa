@@ -1,5 +1,5 @@
 // Contract addresses - Update these after deployment
-export const LENDING_POOL_ADDRESS = 'AS12e69hcgXpQSQubq66AUcBFtqxrufv1HbRgsjVRhXDqT8d6WsXW'; // Replace with deployed contract address
+export const LENDING_POOL_ADDRESS = 'AS12Y7r6TgqA5jViufV9BQ37E3AsBEgCxaFUvk7RFSGQwBCTBHUrE'; // Replace with deployed contract address
 
 // Network configuration
 export const MASSA_NETWORK = {

@@ -5,37 +5,47 @@ import { DEFAULT_ASSETS, LENDING_POOL_ADDRESS } from '../utils/constants';
 import { parseAmount, formatAmount } from '../utils/formatting';
 
 export default function DepositWithdraw() {
-  const { account } = useWallet();
-  const { depositCollateral, withdrawCollateral, loading, error, getTokenBalance, getAllowance, approveToken } = useLendingPool();
+  const { account, connected } = useWallet();
+  const { depositCollateral, withdrawCollateral, loading, error, getTokenBalance, getAllowance, approveToken, getUserCollateral, getMaxWithdraw } = useLendingPool();
   const [selectedAsset, setSelectedAsset] = useState(DEFAULT_ASSETS[0]);
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [txStatus, setTxStatus] = useState<string>('');
   const [balance, setBalance] = useState<bigint>(0n);
+  const [depositedBalance, setDepositedBalance] = useState<bigint>(0n);
+  const [maxWithdrawable, setMaxWithdrawable] = useState<bigint>(0n);
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [allowance, setAllowance] = useState<bigint>(0n);
   const [needsApproval, setNeedsApproval] = useState(false);
 
-  // Fetch token balance and allowance when account or selected asset changes
+  // Fetch token balance, deposited balance, and allowance when account or selected asset changes
   useEffect(() => {
     const fetchData = async () => {
       if (!account) {
         setBalance(0n);
+        setDepositedBalance(0n);
+        setMaxWithdrawable(0n);
         setAllowance(0n);
         return;
       }
 
       setLoadingBalance(true);
       try {
-        const [bal, allow] = await Promise.all([
+        const [bal, deposited, allow, maxWithdraw] = await Promise.all([
           getTokenBalance(selectedAsset.address, account),
+          getUserCollateral(account, selectedAsset.address),
           getAllowance(selectedAsset.address, account, LENDING_POOL_ADDRESS),
+          getMaxWithdraw(account, selectedAsset.address),
         ]);
         setBalance(bal);
+        setDepositedBalance(deposited);
+        setMaxWithdrawable(maxWithdraw);
         setAllowance(allow);
       } catch (err) {
         console.error('Failed to fetch data:', err);
         setBalance(0n);
+        setDepositedBalance(0n);
+        setMaxWithdrawable(0n);
         setAllowance(0n);
       } finally {
         setLoadingBalance(false);
@@ -43,7 +53,7 @@ export default function DepositWithdraw() {
     };
 
     fetchData();
-  }, [account, selectedAsset.address, getTokenBalance, getAllowance]);
+  }, [account, selectedAsset.address, getTokenBalance, getAllowance, getUserCollateral, getMaxWithdraw]);
 
   // Check if approval is needed when amount changes
   useEffect(() => {
@@ -97,12 +107,14 @@ export default function DepositWithdraw() {
 
       setAmount('');
 
-      // Refetch balance and allowance after successful transaction
-      const [newBalance, newAllowance] = await Promise.all([
+      // Refetch balances after successful transaction
+      const [newBalance, newDeposited, newAllowance] = await Promise.all([
         getTokenBalance(selectedAsset.address, account),
+        getUserCollateral(account, selectedAsset.address),
         getAllowance(selectedAsset.address, account, LENDING_POOL_ADDRESS),
       ]);
       setBalance(newBalance);
+      setDepositedBalance(newDeposited);
       setAllowance(newAllowance);
     } catch (err) {
       console.error('Transaction error:', err);
@@ -112,12 +124,14 @@ export default function DepositWithdraw() {
   };
 
   const handleMaxClick = () => {
-    if (balance > 0n) {
-      setAmount(formatAmount(balance, selectedAsset.decimals));
+    // Use wallet balance for deposit, safe max withdraw for withdraw
+    const maxAmount = mode === 'deposit' ? balance : maxWithdrawable;
+    if (maxAmount > 0n) {
+      setAmount(formatAmount(maxAmount, selectedAsset.decimals));
     }
   };
 
-  if (!account) {
+  if (!connected || !account) {
     return (
       <div className="card">
         <p className="text-center text-slate-400">Connect your wallet to deposit or withdraw collateral</p>
@@ -202,9 +216,16 @@ export default function DepositWithdraw() {
               <span className="text-slate-400">{selectedAsset.symbol}</span>
             </div>
           </div>
-          <p className="mt-1 text-xs text-slate-400">
-            Balance: {loadingBalance ? '...' : formatAmount(balance, selectedAsset.decimals)} {selectedAsset.symbol}
-          </p>
+          <div className="mt-1 flex justify-between text-xs text-slate-400">
+            <span>
+              {mode === 'deposit' ? 'Wallet Balance' : 'Deposited'}: {loadingBalance ? '...' : formatAmount(mode === 'deposit' ? balance : depositedBalance, selectedAsset.decimals)} {selectedAsset.symbol}
+            </span>
+            {mode === 'withdraw' && depositedBalance > 0n && (
+              <span className="text-primary-400">
+                Safe Max: {loadingBalance ? '...' : formatAmount(maxWithdrawable, selectedAsset.decimals)} {selectedAsset.symbol}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Approve/Submit Buttons */}

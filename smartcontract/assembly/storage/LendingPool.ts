@@ -1,9 +1,12 @@
 import { Storage } from '@massalabs/massa-as-sdk';
-import { Args, u256ToBytes, bytesToU256, stringToBytes, bytesToString, bytesToU64, bytesToU32 } from '@massalabs/as-types';
+import { Args, u256ToBytes, bytesToU256, bytesToU32, stringToBytes, bytesToU64, u32ToBytes, u64ToBytes } from '@massalabs/as-types';
 import { u256 } from 'as-bignum/assembly';
 
 /**
  * Storage keys and helper functions for the Lending Pool contract
+ *
+ * For u256 values, we serialize them to bytes and store using the generic Storage.set/get
+ * which supports StaticArray<u8> as both key and value types.
  */
 
 // ============================================
@@ -42,25 +45,26 @@ export const LIQUIDATION_PENALTY_KEY = 'liquidation_penalty'; // Liquidation bon
 export class UserCollateralStorage {
   private static PREFIX: string = 'user_collateral:';
 
-  static getKey(userAddress: string, tokenAddress: string): string {
-    return this.PREFIX + userAddress + ':' + tokenAddress;
+  static getKey(userAddress: string, tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + userAddress + ':' + tokenAddress).serialize();
   }
 
   static get(userAddress: string, tokenAddress: string): u256 {
     const key = this.getKey(userAddress, tokenAddress);
-    if (!Storage.has(key)) {
+    if (!Storage.has<StaticArray<u8>>(key)) {
       return u256.Zero;
     }
-    return bytesToU256(stringToBytes(Storage.get(key)));
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
   }
 
   static set(userAddress: string, tokenAddress: string, amount: u256): void {
     const key = this.getKey(userAddress, tokenAddress);
-    Storage.set(key, bytesToString(u256ToBytes(amount)));
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(amount));
   }
 
   static has(userAddress: string, tokenAddress: string): bool {
-    return Storage.has(this.getKey(userAddress, tokenAddress));
+    return Storage.has<StaticArray<u8>>(this.getKey(userAddress, tokenAddress));
   }
 }
 
@@ -72,25 +76,26 @@ export class UserCollateralStorage {
 export class UserDebtStorage {
   private static PREFIX: string = 'user_debt:';
 
-  static getKey(userAddress: string, tokenAddress: string): string {
-    return this.PREFIX + userAddress + ':' + tokenAddress;
+  static getKey(userAddress: string, tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + userAddress + ':' + tokenAddress).serialize();
   }
 
   static get(userAddress: string, tokenAddress: string): u256 {
     const key = this.getKey(userAddress, tokenAddress);
-    if (!Storage.has(key)) {
+    if (!Storage.has<StaticArray<u8>>(key)) {
       return u256.Zero;
     }
-    return bytesToU256(stringToBytes(Storage.get(key)));
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
   }
 
   static set(userAddress: string, tokenAddress: string, amount: u256): void {
     const key = this.getKey(userAddress, tokenAddress);
-    Storage.set(key, bytesToString(u256ToBytes(amount)));
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(amount));
   }
 
   static has(userAddress: string, tokenAddress: string): bool {
-    return Storage.has(this.getKey(userAddress, tokenAddress));
+    return Storage.has<StaticArray<u8>>(this.getKey(userAddress, tokenAddress));
   }
 }
 
@@ -159,25 +164,26 @@ export class SupportedAssetsStorage {
 export class AssetPriceStorage {
   private static PREFIX: string = 'asset_price:';
 
-  static getKey(tokenAddress: string): string {
-    return this.PREFIX + tokenAddress;
+  static getKey(tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + tokenAddress).serialize();
   }
 
   static get(tokenAddress: string): u256 {
     const key = this.getKey(tokenAddress);
-    if (!Storage.has(key)) {
+    if (!Storage.has<StaticArray<u8>>(key)) {
       return u256.Zero;
     }
-    return bytesToU256(stringToBytes(Storage.get(key)));
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
   }
 
   static set(tokenAddress: string, price: u256): void {
     const key = this.getKey(tokenAddress);
-    Storage.set(key, bytesToString(u256ToBytes(price)));
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(price));
   }
 
   static has(tokenAddress: string): bool {
-    return Storage.has(this.getKey(tokenAddress));
+    return Storage.has<StaticArray<u8>>(this.getKey(tokenAddress));
   }
 }
 
@@ -189,21 +195,22 @@ export class AssetPriceStorage {
 export class TotalCollateralStorage {
   private static PREFIX: string = 'total_collateral:';
 
-  static getKey(tokenAddress: string): string {
-    return this.PREFIX + tokenAddress;
+  static getKey(tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + tokenAddress).serialize();
   }
 
   static get(tokenAddress: string): u256 {
     const key = this.getKey(tokenAddress);
-    if (!Storage.has(key)) {
+    if (!Storage.has<StaticArray<u8>>(key)) {
       return u256.Zero;
     }
-    return bytesToU256(stringToBytes(Storage.get(key)));
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
   }
 
   static set(tokenAddress: string, amount: u256): void {
     const key = this.getKey(tokenAddress);
-    Storage.set(key, bytesToString(u256ToBytes(amount)));
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(amount));
   }
 }
 
@@ -215,21 +222,22 @@ export class TotalCollateralStorage {
 export class TotalBorrowsStorage {
   private static PREFIX: string = 'total_borrows:';
 
-  static getKey(tokenAddress: string): string {
-    return this.PREFIX + tokenAddress;
+  static getKey(tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + tokenAddress).serialize();
   }
 
   static get(tokenAddress: string): u256 {
     const key = this.getKey(tokenAddress);
-    if (!Storage.has(key)) {
+    if (!Storage.has<StaticArray<u8>>(key)) {
       return u256.Zero;
     }
-    return bytesToU256(stringToBytes(Storage.get(key)));
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
   }
 
   static set(tokenAddress: string, amount: u256): void {
     const key = this.getKey(tokenAddress);
-    Storage.set(key, bytesToString(u256ToBytes(amount)));
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(amount));
   }
 }
 
@@ -283,27 +291,37 @@ export class SimpleStorage {
   }
 
   static getU64(key: string, defaultValue: u64 = 0): u64 {
-    return Storage.has(key) ? bytesToU64(stringToBytes(Storage.get(key))) : defaultValue;
+    const keyBytes = stringToBytes(key);
+    if (!Storage.has<StaticArray<u8>>(keyBytes)) return defaultValue;
+    return bytesToU64(Storage.get<StaticArray<u8>>(keyBytes));
   }
 
   static setU64(key: string, value: u64): void {
-    Storage.set(key, value.toString());
+    const keyBytes = stringToBytes(key);
+    Storage.set<StaticArray<u8>>(keyBytes, u64ToBytes(value));
   }
 
   static getU32(key: string, defaultValue: u32 = 0): u32 {
-    return Storage.has(key) ? bytesToU32(stringToBytes(Storage.get(key))) : defaultValue;
+    const keyBytes = stringToBytes(key);
+    if (!Storage.has<StaticArray<u8>>(keyBytes)) return defaultValue;
+    return bytesToU32(Storage.get<StaticArray<u8>>(keyBytes));
   }
 
   static setU32(key: string, value: u32): void {
-    Storage.set(key, value.toString());
+    const keyBytes = stringToBytes(key);
+    Storage.set<StaticArray<u8>>(keyBytes, u32ToBytes(value));
   }
 
   static getU256(key: string): u256 {
-    return Storage.has(key) ? bytesToU256(stringToBytes(Storage.get(key))) : u256.Zero;
+    const keyBytes = new Args().add(key).serialize();
+    if (!Storage.has<StaticArray<u8>>(keyBytes)) return u256.Zero;
+    const data = Storage.get<StaticArray<u8>>(keyBytes);
+    return bytesToU256(data);
   }
 
   static setU256(key: string, value: u256): void {
-    Storage.set(key, bytesToString(u256ToBytes(value)));
+    const keyBytes = new Args().add(key).serialize();
+    Storage.set<StaticArray<u8>>(keyBytes, u256ToBytes(value));
   }
 
   static getBool(key: string, defaultValue: bool = false): bool {
