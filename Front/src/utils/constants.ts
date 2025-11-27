@@ -21,6 +21,7 @@ export const DEFAULT_ASSETS = [
     address: 'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU', // WMAS address
     decimals: 9,
     isWrappedNative: true, // Flag to show wrap/unwrap option
+    logo: 'https://assets.coingecko.com/coins/images/29379/standard/Massa_Brand_Red.png',
   },
   {
     symbol: 'USDC',
@@ -28,6 +29,7 @@ export const DEFAULT_ASSETS = [
     address: 'AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ', // USDC address
     decimals: 6,
     isWrappedNative: false,
+    logo: 'https://assets.coingecko.com/coins/images/6319/standard/usdc.png',
   },
   // {
   //   symbol: 'WETH',

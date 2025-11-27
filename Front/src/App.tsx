@@ -8,6 +8,7 @@ import Liquidations from './components/Liquidations';
 import { useLendingPool } from './hooks/useLendingPool';
 import { DEFAULT_ASSETS } from './utils/constants';
 import { formatAmount } from './utils/formatting';
+import TokenIcon from './components/TokenIcon';
 
 type Tab = 'dashboard' | 'supply' | 'borrow' | 'liquidate';
 
@@ -23,6 +24,7 @@ interface MarketData {
   utilization: number;
   loading: boolean;
   price?: bigint;
+  logo?: string;
 }
 
 function AppContent() {
@@ -51,6 +53,7 @@ function AppContent() {
             utilization: info?.utilization || 0,
             loading: false,
             price: info?.price || 0n,
+            logo: asset.logo,
           };
         })
       );
@@ -150,9 +153,7 @@ function AppContent() {
                       <div key={market.symbol} className="p-4 bg-slate-900 rounded-lg border border-slate-700 hover:border-slate-600 transition-colors">
                         <div className="flex justify-between items-center">
                           <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-full flex items-center justify-center">
-                              <span className="text-sm font-bold text-white">{market.symbol[0]}</span>
-                            </div>
+                            <TokenIcon symbol={market.symbol} logo={market.logo} size="lg" />
                             <div>
                               <p className="font-medium text-white">{market.symbol}</p>
                               <p className="text-xs text-slate-400">Supply APY</p>
@@ -204,9 +205,7 @@ function AppContent() {
                       <div key={market.symbol} className="p-4 bg-slate-900 rounded-lg border border-slate-700 hover:border-slate-600 transition-colors">
                         <div className="flex justify-between items-center">
                           <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-full flex items-center justify-center">
-                              <span className="text-sm font-bold text-white">{market.symbol[0]}</span>
-                            </div>
+                            <TokenIcon symbol={market.symbol} logo={market.logo} size="lg" />
                             <div>
                               <p className="font-medium text-white">{market.symbol}</p>
                               <p className="text-xs text-slate-400">Borrow APY</p>

@@ -5,6 +5,7 @@ import { formatAmount, formatAPY, calculateHealthFactor } from '../utils/formatt
 import { DEFAULT_ASSETS, PROTOCOL_PARAMS } from '../utils/constants';
 import HealthFactorGauge from './HealthFactorGauge';
 import TransactionHistory from './TransactionHistory';
+import TokenIcon from './TokenIcon';
 
 export default function Dashboard() {
   const { account, connected } = useWallet();
@@ -207,9 +208,7 @@ export default function Dashboard() {
                   <tr key={asset.address} className="border-b border-slate-800 hover:bg-slate-800/50">
                     <td className="py-4 px-4">
                       <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-700 rounded-full flex items-center justify-center">
-                          <span className="text-sm font-bold text-white">{asset.symbol[0]}</span>
-                        </div>
+                        <TokenIcon symbol={asset.symbol} logo={asset.logo} size="md" />
                         <div>
                           <p className="font-medium text-white">{asset.symbol}</p>
                           <p className="text-xs text-slate-400">{asset.name}</p>
@@ -263,9 +262,7 @@ export default function Dashboard() {
                 return (
                   <div key={asset.address} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-green-700 rounded-full flex items-center justify-center">
-                        <span className="text-xs font-bold text-white">{asset.symbol[0]}</span>
-                      </div>
+                      <TokenIcon symbol={asset.symbol} logo={asset.logo} size="md" />
                       <div>
                         <p className="text-sm font-medium text-white">{asset.symbol}</p>
                         <p className="text-xs text-slate-400">
@@ -304,9 +301,7 @@ export default function Dashboard() {
                 return (
                   <div key={asset.address} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-700 rounded-full flex items-center justify-center">
-                        <span className="text-xs font-bold text-white">{asset.symbol[0]}</span>
-                      </div>
+                      <TokenIcon symbol={asset.symbol} logo={asset.logo} size="md" />
                       <div>
                         <p className="text-sm font-medium text-white">{asset.symbol}</p>
                         <p className="text-xs text-slate-400">
