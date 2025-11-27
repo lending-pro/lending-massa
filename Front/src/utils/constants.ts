@@ -1,6 +1,9 @@
 // Contract addresses - Update these after deployment
 export const LENDING_POOL_ADDRESS = 'AS12Y7r6TgqA5jViufV9BQ37E3AsBEgCxaFUvk7RFSGQwBCTBHUrE'; // Replace with deployed contract address
 
+// WMAS contract address (for wrapping/unwrapping native MAS)
+export const WMAS_ADDRESS = 'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU';
+
 // Network configuration
 export const MASSA_NETWORK = {
   chainId: 77658366n, // Massa buildnet
@@ -13,22 +16,25 @@ export const RPC_URL = 'https://buildnet.massa.net/api/v2';
 // Default assets - Update with actual token addresses
 export const DEFAULT_ASSETS = [
   {
-    symbol: 'MAS',
-    name: 'Massa',
+    symbol: 'WMAS',
+    name: 'Wrapped Massa',
     address: 'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU', // WMAS address
     decimals: 9,
+    isWrappedNative: true, // Flag to show wrap/unwrap option
   },
   {
     symbol: 'USDC',
     name: 'USD Coin',
     address: 'AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ', // USDC address
     decimals: 6,
+    isWrappedNative: false,
   },
   // {
   //   symbol: 'WETH',
   //   name: 'Wrapped Ether',
   //   address: 'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk', // WETH address
   //   decimals: 18,
+  //   isWrappedNative: false,
   // },
 ];
 

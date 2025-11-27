@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useWallet } from '../contexts/WalletContext';
 import { shortenAddress } from '../utils/formatting';
+import WrapUnwrapModal from './WrapUnwrapModal';
 
 export default function Header() {
   const {
@@ -20,6 +21,7 @@ export default function Header() {
 
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showWrapModal, setShowWrapModal] = useState(false);
 
   const handleConnectWallet = async (provider: typeof providerList[0]) => {
     setSelectedProvider(provider);
@@ -64,6 +66,20 @@ export default function Header() {
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 <span className="text-sm text-slate-300">{network || 'Testnet'}</span>
               </div>
+
+              {/* Wrap/Unwrap Button */}
+              {connected && account && (
+                <button
+                  onClick={() => setShowWrapModal(true)}
+                  className="hidden sm:flex items-center space-x-2 px-3 py-2 bg-slate-800 rounded-lg border border-slate-700 hover:border-primary-500 hover:bg-slate-700 transition-colors"
+                  title="Wrap/Unwrap MAS"
+                >
+                  <svg className="w-4 h-4 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  <span className="text-sm text-slate-300">Wrap</span>
+                </button>
+              )}
 
               {connected && account ? (
                 <div className="relative">
@@ -233,6 +249,9 @@ export default function Header() {
       {showAccountMenu && (
         <div className="fixed inset-0 z-40" onClick={() => setShowAccountMenu(false)}></div>
       )}
+
+      {/* Wrap/Unwrap Modal */}
+      <WrapUnwrapModal isOpen={showWrapModal} onClose={() => setShowWrapModal(false)} />
     </>
   );
 }
