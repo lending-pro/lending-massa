@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '../contexts/WalletContext';
+import { useRefresh } from '../contexts/RefreshContext';
 import { useLendingPool } from '../hooks/useLendingPool';
 import { DEFAULT_ASSETS, PROTOCOL_PARAMS } from '../utils/constants';
 import { parseAmount, formatAmount, formatPercentage, shortenAddress } from '../utils/formatting';
@@ -8,6 +9,7 @@ import HealthFactorGauge from './HealthFactorGauge';
 
 export default function Liquidations() {
   const { account, connected } = useWallet();
+  const { triggerRefresh } = useRefresh();
   const { liquidate, loading, getAccountHealth, getUserCollateral, getUserDebt } = useLendingPool();
   const [liquidationCandidates, setLiquidationCandidates] = useState<LiquidationCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<LiquidationCandidate | null>(null);
@@ -118,6 +120,9 @@ export default function Liquidations() {
       setTxStatus('Liquidation successful!');
       setRepayAmount('');
       setSelectedCandidate(null);
+
+      // Trigger global refresh for Dashboard and other components
+      triggerRefresh();
     } catch (err) {
       setTxStatus('Liquidation failed. Please try again.');
     }

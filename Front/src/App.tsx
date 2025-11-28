@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { WalletProvider, useWallet } from './contexts/WalletContext';
+import { RefreshProvider, useRefresh } from './contexts/RefreshContext';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import DepositWithdraw from './components/DepositWithdraw';
@@ -35,6 +36,7 @@ function AppContent() {
   const [marketLoading, setMarketLoading] = useState(true);
   const { getMarketInfo } = useLendingPool();
   const { account } = useWallet();
+  const { refreshKey } = useRefresh();
 
   const loadMarketData = useCallback(async () => {
     setMarketLoading(true);
@@ -70,12 +72,12 @@ function AppContent() {
     }
   }, [getMarketInfo]);
 
-  // Load market data on mount and when account changes
+  // Load market data on mount, when account changes, or when refreshKey changes (after transactions)
   useEffect(() => {
     loadMarketData();
     const interval = setInterval(loadMarketData, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
-  }, [loadMarketData, account]);
+  }, [loadMarketData, account, refreshKey]);
 
   const tabs = [
     { id: 'dashboard' as Tab, name: 'Dashboard', icon: '📊' },
@@ -257,7 +259,9 @@ function AppContent() {
 function App() {
   return (
     <WalletProvider>
-      <AppContent />
+      <RefreshProvider>
+        <AppContent />
+      </RefreshProvider>
     </WalletProvider>
   );
 }

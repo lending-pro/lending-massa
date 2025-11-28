@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from '../contexts/WalletContext';
+import { useRefresh } from '../contexts/RefreshContext';
 import { useLendingPool } from '../hooks/useLendingPool';
 import { DEFAULT_ASSETS, LENDING_POOL_ADDRESS } from '../utils/constants';
 import { parseAmount, formatAmount } from '../utils/formatting';
 
 export default function DepositWithdraw() {
   const { account, connected } = useWallet();
+  const { triggerRefresh } = useRefresh();
   const { depositCollateral, withdrawCollateral, loading, error, getTokenBalance, getAllowance, approveToken, getUserCollateral, getMaxWithdraw } = useLendingPool();
   const [selectedAsset, setSelectedAsset] = useState(DEFAULT_ASSETS[0]);
   const [amount, setAmount] = useState('');
@@ -118,6 +120,9 @@ export default function DepositWithdraw() {
       setDepositedBalance(newDeposited);
       setAllowance(newAllowance);
       setMaxWithdrawable(newMaxWithdraw);
+
+      // Trigger global refresh for Dashboard and other components
+      triggerRefresh();
     } catch (err) {
       console.error('Transaction error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Transaction failed. Please try again.';

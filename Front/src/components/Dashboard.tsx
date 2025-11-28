@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '../contexts/WalletContext';
+import { useRefresh } from '../contexts/RefreshContext';
 import { useLendingPool } from '../hooks/useLendingPool';
 import { formatAmount, formatAPY, calculateHealthFactor } from '../utils/formatting';
 import { DEFAULT_ASSETS, PROTOCOL_PARAMS } from '../utils/constants';
@@ -9,6 +10,7 @@ import TokenIcon from './TokenIcon';
 
 export default function Dashboard() {
   const { account, connected } = useWallet();
+  const { refreshKey } = useRefresh();
   const { getUserPosition, getBorrowRate, getMarketInfo } = useLendingPool();
   const [positions, setPositions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,7 @@ export default function Dashboard() {
       setPositions([]);
       setLoading(false);
     }
-  }, [connected, account, loadPositions]);
+  }, [connected, account, loadPositions, refreshKey]);
 
   if (!connected || !account) {
     return (
