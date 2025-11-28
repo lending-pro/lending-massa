@@ -124,15 +124,31 @@ export default function BorrowRepay() {
 
       setAmount('');
 
-      // Refetch data after successful transaction
-      const [userDebt, balance, newAllowance] = await Promise.all([
+      // Refetch all data after successful transaction
+      const [userDebt, balance, newAllowance, maxBorrow, health] = await Promise.all([
         getUserDebt(account, selectedAsset.address),
         getTokenBalance(selectedAsset.address, account),
         getAllowance(selectedAsset.address, account, LENDING_POOL_ADDRESS),
+        getMaxBorrow(account, selectedAsset.address),
+        getAccountHealth(account),
       ]);
       setDebt(userDebt);
       setTokenBalance(balance);
       setAllowance(newAllowance);
+      setMaxBorrowable(maxBorrow);
+
+      // Update borrow limit used
+      if (health && health.collateralValue > 0n) {
+        const maxBorrowValue = (health.collateralValue * BigInt(PROTOCOL_PARAMS.COLLATERAL_FACTOR)) / 10000n;
+        if (maxBorrowValue > 0n) {
+          const used = Number((health.debtValue * 10000n) / maxBorrowValue) / 100;
+          setBorrowLimitUsed(Math.min(used, 100));
+        } else {
+          setBorrowLimitUsed(0);
+        }
+      } else {
+        setBorrowLimitUsed(0);
+      }
     } catch (err) {
       console.error('Transaction error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Transaction failed. Please try again.';

@@ -406,6 +406,51 @@ export function useLendingPool() {
     []
   );
 
+  // Internal helper to calculate max withdraw without re-fetching data
+  const getMaxWithdrawInternal = async (
+    _userAddress: string,
+    _tokenAddress: string,
+    userCollateral: bigint,
+    health: { collateralValue: bigint; debtValue: bigint; healthFactor: bigint; isHealthy: boolean } | null,
+    price: bigint,
+    decimals: number
+  ): Promise<bigint> => {
+    try {
+      if (userCollateral <= 0n) return 0n;
+
+      // If no debt or no health data, can withdraw all
+      if (!health || health.debtValue <= 0n) return userCollateral;
+
+      const { collateralValue, debtValue } = health;
+
+      // Calculate minimum collateral value needed to maintain HF > 1.1
+      // minCollateralValue = debtValue * 11000 / liquidationThreshold
+      const liquidationThreshold = BigInt(PROTOCOL_PARAMS.LIQUIDATION_THRESHOLD);
+      const minCollateralValue = (debtValue * 11000n) / liquidationThreshold;
+
+      // Add 1% safety buffer
+      const safeMinCollateralValue = minCollateralValue + minCollateralValue / 100n;
+
+      // Max withdrawable value in USD
+      const maxWithdrawValueUSD = collateralValue > safeMinCollateralValue
+        ? collateralValue - safeMinCollateralValue
+        : 0n;
+
+      if (maxWithdrawValueUSD <= 0n) return 0n;
+
+      if (price <= 0n) return 0n;
+
+      const tokenPrecision = BigInt(10 ** decimals);
+      const maxWithdrawTokens = (maxWithdrawValueUSD * tokenPrecision) / price;
+
+      // Can't withdraw more than deposited
+      return maxWithdrawTokens < userCollateral ? maxWithdrawTokens : userCollateral;
+    } catch (err) {
+      console.error('Get max withdraw internal error:', err);
+      return 0n;
+    }
+  };
+
   const getUserPosition = useCallback(
     async (tokenAddress: string): Promise<UserPosition | null> => {
       if (!account) return null;
@@ -435,6 +480,9 @@ export function useLendingPool() {
         // Get account health for health factor
         const health = await getAccountHealth(account);
 
+        // Calculate max withdrawable amount using getMaxWithdraw
+        const availableWithdraw = await getMaxWithdrawInternal(account, tokenAddress, collateral, health, price, decimals);
+
         return {
           collateral: collateral.toString(),
           debt: debt.toString(),
@@ -442,7 +490,7 @@ export function useLendingPool() {
           debtValue: debtValue.toString(),
           healthFactor: health?.healthFactor.toString() || '0',
           maxBorrow: maxBorrow.toString(),
-          availableWithdraw: '0', // TODO: Calculate based on health factor
+          availableWithdraw: availableWithdraw.toString(),
         };
       } catch (err) {
         console.error('Get user position error:', err);
@@ -711,28 +759,23 @@ export function useLendingPool() {
   };
 }
 
-// Helper function to calculate APY from APR basis points
+// Helper function to convert APR basis points to percentage
+// The smart contract uses simple interest, so we display APR (not compounded APY)
 function calculateAPY(aprBasisPoints: number): number {
   // Safeguard against invalid values
   if (!aprBasisPoints || aprBasisPoints < 0 || aprBasisPoints > 100000 || !isFinite(aprBasisPoints)) {
     return 0;
   }
 
-  const apr = aprBasisPoints / 10000; // Convert to decimal
-  const compoundingPeriods = 365; // Daily compounding
+  // Simple conversion: basis points to percentage
+  // 10000 basis points = 100%, so divide by 100 to get percentage
+  const apr = aprBasisPoints / 100;
 
-  try {
-    const apy = Math.pow(1 + apr / compoundingPeriods, compoundingPeriods) - 1;
-
-    // Check for overflow or unrealistic values
-    if (!isFinite(apy) || apy < 0 || apy > 1000) {
-      console.warn(`Unrealistic APY calculated from ${aprBasisPoints} basis points`);
-      return 0;
-    }
-
-    return apy * 100; // Return as percentage
-  } catch (err) {
-    console.error('APY calculation error:', err);
+  // Check for unrealistic values
+  if (!isFinite(apr) || apr < 0 || apr > 1000) {
+    console.warn(`Unrealistic APR calculated from ${aprBasisPoints} basis points`);
     return 0;
   }
+
+  return apr; // Return as percentage (e.g., 200 basis points = 2%)
 }

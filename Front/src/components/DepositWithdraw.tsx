@@ -107,15 +107,17 @@ export default function DepositWithdraw() {
 
       setAmount('');
 
-      // Refetch balances after successful transaction
-      const [newBalance, newDeposited, newAllowance] = await Promise.all([
+      // Refetch all balances after successful transaction
+      const [newBalance, newDeposited, newAllowance, newMaxWithdraw] = await Promise.all([
         getTokenBalance(selectedAsset.address, account),
         getUserCollateral(account, selectedAsset.address),
         getAllowance(selectedAsset.address, account, LENDING_POOL_ADDRESS),
+        getMaxWithdraw(account, selectedAsset.address),
       ]);
       setBalance(newBalance);
       setDepositedBalance(newDeposited);
       setAllowance(newAllowance);
+      setMaxWithdrawable(newMaxWithdraw);
     } catch (err) {
       console.error('Transaction error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Transaction failed. Please try again.';
