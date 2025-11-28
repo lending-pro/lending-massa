@@ -1,17 +1,14 @@
 import {
   Context,
   generateEvent,
-  Storage,
   Address,
-  transferredCoins,
-  transferCoins
 } from '@massalabs/massa-as-sdk';
-import { Args, stringToBytes, bytesToString } from '@massalabs/as-types';
+import { Args, stringToBytes } from '@massalabs/as-types';
 import { u256 } from 'as-bignum/assembly';
 import { SafeMath } from '../libraries/SafeMath';
 import { InterestRateModel } from '../libraries/InterestRateModel';
 import { BinHelper } from '../libraries/BinHelper';
-import { IERC20, createTokenInterface } from '../interfaces/IERC20';
+import { createTokenInterface } from '../interfaces/IERC20';
 import { createDusaPairInterface } from '../interfaces/IDusaPair';
 import { createFlashLoanCallbackInterface } from '../interfaces/IFlashLoanCallback';
 import {
@@ -46,18 +43,18 @@ import {
   UserSupplyIndexStorage,
   SimpleStorage
 } from '../storage/LendingPool';
-import { UserPosition, AccountHealth } from '../structs/UserPosition';
+import { AccountHealth } from '../structs/UserPosition';
 
 // ============================================
 // Constants
 // ============================================
 
-const BASIS_POINTS_DIVISOR: u32 = 10000; // 10000 = 100%
 const PRICE_PRECISION: u256 = u256.fromU64(1000000000000000000); // 1e18
 const ORACLE_ADDRESS_KEY = 'oracle_address';
 const PRICE_MAX_AGE_KEY = 'price_max_age'; // Max age for price in milliseconds (default 10 minutes)
 const TWAP_PERIOD_KEY = 'twap_period'; // TWAP period in milliseconds (default 5 minutes)
 const ASSET_PAIR_PREFIX = 'asset_pair:'; // Prefix for storing Dusa pair addresses per asset
+const MAX_ASSETS_PER_USER: i32 = 10; // Maximum number of assets a user can have positions in
 
 // ============================================
 // Helper Functions
@@ -212,7 +209,11 @@ export function depositCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> 
   // Update user's supply index to current (they are now "caught up")
   UserSupplyIndexStorage.set(caller, tokenAddress, currentIndex);
 
-  // Track this asset for the user
+  // Track this asset for the user (with limit check)
+  if (!UserAssetsStorage.hasAsset(caller, tokenAddress)) {
+    const currentAssets = UserAssetsStorage.getAssets(caller);
+    assert(currentAssets.length < MAX_ASSETS_PER_USER, 'Maximum assets per user exceeded');
+  }
   UserAssetsStorage.addAsset(caller, tokenAddress);
 
   // Update total collateral
@@ -324,6 +325,94 @@ export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8>
 }
 
 /**
+ * Check if a user has any debt across all assets
+ * @param user - User address
+ * @returns true if user has debt in any asset
+ */
+function _userHasAnyDebt(user: string): bool {
+  const userAssets = UserAssetsStorage.getAssets(user);
+  for (let i = 0; i < userAssets.length; i++) {
+    const debt = UserDebtStorage.get(user, userAssets[i]);
+    if (SafeMath.isPositive(debt)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Emergency withdrawal when oracle is unavailable
+ * Only allows users with NO debt to withdraw their collateral
+ * This prevents users from being locked when oracle fails
+ * @param binaryArgs - Serialized arguments: tokenAddress (string), amount (u256)
+ */
+export function emergencyWithdraw(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  // Emergency withdrawals work even when paused (that's the point)
+  nonReentrantStart();
+
+  const args = new Args(binaryArgs);
+  const tokenAddress = args.nextString().expect('Token address is missing');
+  const amount = args.nextU256().expect('Amount is missing');
+
+  const caller = Context.caller().toString();
+  const currentTime = Context.timestamp();
+
+  // Only allow emergency withdrawal if user has NO debt
+  assert(!_userHasAnyDebt(caller), 'Emergency withdrawal not allowed: user has outstanding debt');
+
+  // Update supply index first (accrue interest for all depositors)
+  _updateSupplyIndex(tokenAddress);
+
+  // Get current supply index
+  const currentIndex = SupplyIndexStorage.get(tokenAddress);
+
+  // Get user's stored collateral
+  const storedCollateral = UserCollateralStorage.get(caller, tokenAddress);
+
+  // Calculate user's actual collateral with accrued interest
+  const userIndex = UserSupplyIndexStorage.get(caller, tokenAddress);
+  const actualCollateral = SafeMath.div(
+    SafeMath.mul(storedCollateral, currentIndex),
+    userIndex
+  );
+
+  assert(actualCollateral >= amount, 'Insufficient collateral');
+
+  // Calculate new collateral after withdrawal
+  const newCollateral = SafeMath.sub(actualCollateral, amount);
+  UserCollateralStorage.set(caller, tokenAddress, newCollateral);
+
+  // Update user's supply index to current
+  UserSupplyIndexStorage.set(caller, tokenAddress, currentIndex);
+
+  // Update total collateral
+  const totalCollateral = TotalCollateralStorage.get(tokenAddress);
+  TotalCollateralStorage.set(tokenAddress, SafeMath.sub(totalCollateral, amount));
+
+  // Transfer tokens to caller
+  const token = createTokenInterface(tokenAddress);
+  token.transfer(new Address(caller), amount);
+
+  // Update timestamp
+  UserLastUpdateStorage.set(caller, tokenAddress, currentTime);
+
+  // if user has no collateral in this asset, remove it from their list
+  if (SafeMath.isZero(newCollateral)) {
+    UserAssetsStorage.removeAsset(caller, tokenAddress);
+  }
+
+  // Emit event
+  generateEvent(createEvent('EmergencyWithdrawal', [
+    caller,
+    tokenAddress,
+    amount.toString()
+  ]));
+
+  nonReentrantEnd();
+  return stringToBytes('Emergency withdrawal successful');
+}
+
+/**
  * Borrow tokens against collateral
  * @param binaryArgs - Serialized arguments: tokenAddress (string), amount (u256)
  */
@@ -341,6 +430,9 @@ export function borrow(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const caller = Context.caller().toString();
   const currentTime = Context.timestamp();
 
+  // Update supply index first (so depositors get interest from borrows)
+  _updateSupplyIndex(tokenAddress);
+
   // Accrue interest on existing debt
   _accrueInterest(caller, tokenAddress);
 
@@ -349,7 +441,11 @@ export function borrow(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const newDebt = SafeMath.add(currentDebt, amount);
   UserDebtStorage.set(caller, tokenAddress, newDebt);
 
-  // Track this asset for the user
+  // Track this asset for the user (with limit check)
+  if (!UserAssetsStorage.hasAsset(caller, tokenAddress)) {
+    const currentAssets = UserAssetsStorage.getAssets(caller);
+    assert(currentAssets.length < MAX_ASSETS_PER_USER, 'Maximum assets per user exceeded');
+  }
   UserAssetsStorage.addAsset(caller, tokenAddress);
 
   // Update total borrows
@@ -401,6 +497,9 @@ export function repay(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 
   const caller = Context.caller().toString();
   const currentTime = Context.timestamp();
+
+  // Update supply index first (so depositors get interest from repayments)
+  _updateSupplyIndex(tokenAddress);
 
   // Accrue interest on existing debt
   _accrueInterest(caller, tokenAddress);
@@ -506,6 +605,10 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 
   const liquidator = Context.caller().toString();
 
+  // Update supply indices for both tokens (so depositors get accurate interest)
+  _updateSupplyIndex(collateralToken);
+  _updateSupplyIndex(debtToken);
+
   // Accrue interest on borrower's debt
   _accrueInterest(borrower, debtToken);
 
@@ -522,11 +625,11 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const maxLiquidation = SafeMath.mulBP(borrowerDebt, closeFactor);
   const actualLiquidationAmount = SafeMath.min(debtAmount, maxLiquidation);
 
-  // Calculate collateral to seize
-  const collateralPrice = AssetPriceStorage.get(collateralToken);
-  const debtPrice = AssetPriceStorage.get(debtToken);
-  assert(SafeMath.isPositive(collateralPrice), 'Collateral price not set');
-  assert(SafeMath.isPositive(debtPrice), 'Debt price not set');
+  // Calculate collateral to seize (use oracle integration)
+  const collateralPrice = _getAssetPrice(collateralToken);
+  const debtPrice = _getAssetPrice(debtToken);
+  assert(SafeMath.isPositive(collateralPrice), 'Collateral price not available');
+  assert(SafeMath.isPositive(debtPrice), 'Debt price not available');
 
   // collateralToSeize = (debtAmount * debtPrice / collateralPrice) * (1 + liquidationBonus)
   const debtValue = SafeMath.mul(actualLiquidationAmount, debtPrice);
