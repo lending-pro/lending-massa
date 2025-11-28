@@ -33,6 +33,19 @@ export const COLLATERAL_FACTOR_KEY = 'collateral_factor'; // Max LTV (e.g., 7500
 export const LIQUIDATION_THRESHOLD_KEY = 'liquidation_threshold'; // Liquidation trigger (e.g., 8000 = 80%)
 export const LIQUIDATION_PENALTY_KEY = 'liquidation_penalty'; // Liquidation bonus (e.g., 1000 = 10%)
 
+// Reserve Factor & Treasury
+export const RESERVE_FACTOR_KEY = 'reserve_factor'; // Protocol fee on interest (e.g., 1000 = 10%)
+export const TREASURY_KEY = 'treasury_address'; // Treasury address for collected fees
+
+// Liquidation Tuning
+export const CLOSE_FACTOR_KEY = 'close_factor'; // Max % of debt liquidatable at once (e.g., 5000 = 50%)
+export const LIQUIDATION_BONUS_MIN_KEY = 'liq_bonus_min'; // Min bonus (e.g., 500 = 5%)
+export const LIQUIDATION_BONUS_MAX_KEY = 'liq_bonus_max'; // Max bonus (e.g., 1500 = 15%)
+
+// Flash Loans
+export const FLASH_LOAN_FEE_KEY = 'flash_loan_fee'; // Flash loan fee (e.g., 9 = 0.09%)
+export const FLASH_LOAN_ENABLED_KEY = 'flash_loan_enabled'; // Enable/disable flash loans
+
 // ============================================
 // PersistentMap Storage Classes
 // ============================================
@@ -275,6 +288,39 @@ export class UserAssetsStorage {
   static hasAsset(userAddress: string, tokenAddress: string): bool {
     const assets = this.getAssets(userAddress);
     return assets.indexOf(tokenAddress) !== -1;
+  }
+}
+
+/**
+ * Storage for treasury reserves (protocol fees collected)
+ * Key: token_address
+ * Value: u256 (accumulated fees)
+ */
+export class TreasuryReservesStorage {
+  private static PREFIX: string = 'treasury_reserves:';
+
+  static getKey(tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + tokenAddress).serialize();
+  }
+
+  static get(tokenAddress: string): u256 {
+    const key = this.getKey(tokenAddress);
+    if (!Storage.has<StaticArray<u8>>(key)) {
+      return u256.Zero;
+    }
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
+  }
+
+  static set(tokenAddress: string, amount: u256): void {
+    const key = this.getKey(tokenAddress);
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(amount));
+  }
+
+  static add(tokenAddress: string, amount: u256): void {
+    const current = this.get(tokenAddress);
+    const newAmount = u256.add(current, amount);
+    this.set(tokenAddress, newAmount);
   }
 }
 

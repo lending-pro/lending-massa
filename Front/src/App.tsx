@@ -5,12 +5,13 @@ import Dashboard from './components/Dashboard';
 import DepositWithdraw from './components/DepositWithdraw';
 import BorrowRepay from './components/BorrowRepay';
 import Liquidations from './components/Liquidations';
+import Analytics from './components/Analytics';
 import { useLendingPool } from './hooks/useLendingPool';
 import { DEFAULT_ASSETS } from './utils/constants';
 import { formatAmount } from './utils/formatting';
 import TokenIcon from './components/TokenIcon';
 
-type Tab = 'dashboard' | 'supply' | 'borrow' | 'liquidate';
+type Tab = 'dashboard' | 'supply' | 'borrow' | 'liquidate' | 'analytics';
 
 interface MarketData {
   symbol: string;
@@ -81,6 +82,7 @@ function AppContent() {
     { id: 'supply' as Tab, name: 'Supply', icon: '💰' },
     { id: 'borrow' as Tab, name: 'Borrow', icon: '🏦' },
     { id: 'liquidate' as Tab, name: 'Liquidate', icon: '⚡' },
+    { id: 'analytics' as Tab, name: 'Analytics', icon: '📈' },
   ];
 
   return (
@@ -231,6 +233,7 @@ function AppContent() {
             </div>
           )}
           {activeTab === 'liquidate' && <Liquidations />}
+          {activeTab === 'analytics' && <Analytics />}
         </div>
 
         {/* Footer */}

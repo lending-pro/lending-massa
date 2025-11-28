@@ -13,6 +13,7 @@ import { InterestRateModel } from '../libraries/InterestRateModel';
 import { BinHelper } from '../libraries/BinHelper';
 import { IERC20, createTokenInterface } from '../interfaces/IERC20';
 import { createDusaPairInterface } from '../interfaces/IDusaPair';
+import { createFlashLoanCallbackInterface } from '../interfaces/IFlashLoanCallback';
 import {
   OWNER_KEY,
   INITIALIZED_KEY,
@@ -24,6 +25,13 @@ import {
   COLLATERAL_FACTOR_KEY,
   LIQUIDATION_THRESHOLD_KEY,
   LIQUIDATION_PENALTY_KEY,
+  RESERVE_FACTOR_KEY,
+  TREASURY_KEY,
+  CLOSE_FACTOR_KEY,
+  LIQUIDATION_BONUS_MIN_KEY,
+  LIQUIDATION_BONUS_MAX_KEY,
+  FLASH_LOAN_FEE_KEY,
+  FLASH_LOAN_ENABLED_KEY,
   UserCollateralStorage,
   UserDebtStorage,
   UserLastUpdateStorage,
@@ -32,6 +40,7 @@ import {
   TotalCollateralStorage,
   TotalBorrowsStorage,
   UserAssetsStorage,
+  TreasuryReservesStorage,
   SimpleStorage
 } from '../storage/LendingPool';
 import { UserPosition, AccountHealth } from '../structs/UserPosition';
@@ -109,6 +118,19 @@ export function constructor(binaryArgs: StaticArray<u8>): void {
   SimpleStorage.setU32(COLLATERAL_FACTOR_KEY, 7500); // 75% max LTV
   SimpleStorage.setU32(LIQUIDATION_THRESHOLD_KEY, 8000); // 80% liquidation threshold
   SimpleStorage.setU32(LIQUIDATION_PENALTY_KEY, 1000); // 10% liquidation penalty
+
+  // Set reserve factor (protocol fee on interest)
+  SimpleStorage.setU32(RESERVE_FACTOR_KEY, 1000); // 10% of interest goes to protocol
+  SimpleStorage.setString(TREASURY_KEY, owner); // Treasury initially set to owner
+
+  // Set liquidation tuning parameters
+  SimpleStorage.setU32(CLOSE_FACTOR_KEY, 5000); // 50% max liquidation at once
+  SimpleStorage.setU32(LIQUIDATION_BONUS_MIN_KEY, 500); // 5% min bonus
+  SimpleStorage.setU32(LIQUIDATION_BONUS_MAX_KEY, 1500); // 15% max bonus
+
+  // Set flash loan parameters
+  SimpleStorage.setU32(FLASH_LOAN_FEE_KEY, 9); // 0.09% flash loan fee
+  SimpleStorage.setBool(FLASH_LOAN_ENABLED_KEY, true); // Flash loans enabled by default
 
   // Set default price staleness check (10 minutes)
   SimpleStorage.setU64(PRICE_MAX_AGE_KEY, 600000); // 10 minutes in milliseconds
@@ -345,6 +367,37 @@ export function repay(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 }
 
 /**
+ * Calculate dynamic liquidation bonus based on health factor
+ * Lower health factor = higher bonus to incentivize liquidators
+ * @param healthFactor - User's health factor (1e18 scaled)
+ * @returns Liquidation bonus in basis points
+ */
+function _calculateLiquidationBonus(healthFactor: u256): u32 {
+  const minBonus = SimpleStorage.getU32(LIQUIDATION_BONUS_MIN_KEY);
+  const maxBonus = SimpleStorage.getU32(LIQUIDATION_BONUS_MAX_KEY);
+
+  // If health factor >= 1.0 (1e18), use minimum bonus
+  if (healthFactor >= PRICE_PRECISION) {
+    return minBonus;
+  }
+
+  // If health factor <= 0.5 (5e17), use maximum bonus
+  const halfPrecision = SafeMath.div(PRICE_PRECISION, u256.from(2));
+  if (healthFactor <= halfPrecision) {
+    return maxBonus;
+  }
+
+  // Linear interpolation between min and max bonus
+  // bonus = maxBonus - ((healthFactor - 0.5) / 0.5) * (maxBonus - minBonus)
+  const bonusRange = maxBonus - minBonus;
+  const hfAboveHalf = SafeMath.sub(healthFactor, halfPrecision);
+  const ratio = SafeMath.div(SafeMath.mul(hfAboveHalf, u256.fromU64(10000)), halfPrecision);
+  const bonusReduction = u32(ratio.toU64()) * bonusRange / 10000;
+
+  return maxBonus - bonusReduction;
+}
+
+/**
  * Liquidate an unhealthy position
  * @param binaryArgs - Serialized arguments: borrower (string), collateralToken (string), debtToken (string), debtAmount (u256)
  */
@@ -370,8 +423,9 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const borrowerDebt = UserDebtStorage.get(borrower, debtToken);
   assert(SafeMath.isPositive(borrowerDebt), 'No debt to liquidate');
 
-  // Calculate actual liquidation amount (max 50% of debt)
-  const maxLiquidation = SafeMath.div(borrowerDebt, u256.from(2));
+  // Calculate actual liquidation amount based on close factor
+  const closeFactor = SimpleStorage.getU32(CLOSE_FACTOR_KEY);
+  const maxLiquidation = SafeMath.mulBP(borrowerDebt, closeFactor);
   const actualLiquidationAmount = SafeMath.min(debtAmount, maxLiquidation);
 
   // Calculate collateral to seize
@@ -380,19 +434,20 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   assert(SafeMath.isPositive(collateralPrice), 'Collateral price not set');
   assert(SafeMath.isPositive(debtPrice), 'Debt price not set');
 
-  // collateralToSeize = (debtAmount * debtPrice / collateralPrice) * (1 + liquidationPenalty)
+  // collateralToSeize = (debtAmount * debtPrice / collateralPrice) * (1 + liquidationBonus)
   const debtValue = SafeMath.mul(actualLiquidationAmount, debtPrice);
   const collateralToSeize = SafeMath.div(debtValue, collateralPrice);
 
-  const liquidationPenalty = SimpleStorage.getU32(LIQUIDATION_PENALTY_KEY);
-  const collateralWithPenalty = SafeMath.add(
+  // Calculate dynamic liquidation bonus based on health factor
+  const liquidationBonus = _calculateLiquidationBonus(health.healthFactor);
+  const collateralWithBonus = SafeMath.add(
     collateralToSeize,
-    SafeMath.mulBP(collateralToSeize, liquidationPenalty)
+    SafeMath.mulBP(collateralToSeize, liquidationBonus)
   );
 
   // Verify borrower has enough collateral
   const borrowerCollateral = UserCollateralStorage.get(borrower, collateralToken);
-  assert(borrowerCollateral >= collateralWithPenalty, 'Insufficient collateral to seize');
+  assert(borrowerCollateral >= collateralWithBonus, 'Insufficient collateral to seize');
 
   // Transfer debt tokens from liquidator to contract
   const debtTokenInterface = createTokenInterface(debtToken);
@@ -403,12 +458,12 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   UserDebtStorage.set(borrower, debtToken, newDebt);
 
   // Update borrower's collateral
-  const newCollateral = SafeMath.sub(borrowerCollateral, collateralWithPenalty);
+  const newCollateral = SafeMath.sub(borrowerCollateral, collateralWithBonus);
   UserCollateralStorage.set(borrower, collateralToken, newCollateral);
 
   // Transfer collateral to liquidator
   const collateralTokenInterface = createTokenInterface(collateralToken);
-  collateralTokenInterface.transfer(new Address(liquidator), collateralWithPenalty);
+  collateralTokenInterface.transfer(new Address(liquidator), collateralWithBonus);
 
   // Update total borrows
   const totalBorrows = TotalBorrowsStorage.get(debtToken);
@@ -416,7 +471,7 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 
   // Update total collateral
   const totalCollateral = TotalCollateralStorage.get(collateralToken);
-  TotalCollateralStorage.set(collateralToken, SafeMath.sub(totalCollateral, collateralWithPenalty));
+  TotalCollateralStorage.set(collateralToken, SafeMath.sub(totalCollateral, collateralWithBonus));
 
   // Emit event
   generateEvent(createEvent('PositionLiquidated', [
@@ -425,7 +480,8 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     debtToken,
     collateralToken,
     actualLiquidationAmount.toString(),
-    collateralWithPenalty.toString()
+    collateralWithBonus.toString(),
+    liquidationBonus.toString()
   ]));
 
   return stringToBytes('Position liquidated successfully');
@@ -436,7 +492,7 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 // ============================================
 
 /**
- * Accrues interest on a user's debt
+ * Accrues interest on a user's debt and collects protocol fees
  * @param user - User address
  * @param tokenAddress - Token address
  */
@@ -479,6 +535,17 @@ function _accrueInterest(user: string, tokenAddress: string): void {
     lastUpdate,
     currentTime
   );
+
+  // Calculate interest accrued
+  const interestAccrued = SafeMath.sub(newDebt, currentDebt);
+
+  // Calculate protocol fee (reserve factor)
+  const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
+  if (reserveFactor > 0 && SafeMath.isPositive(interestAccrued)) {
+    const protocolFee = SafeMath.mulBP(interestAccrued, reserveFactor);
+    // Add to treasury reserves
+    TreasuryReservesStorage.add(tokenAddress, protocolFee);
+  }
 
   // Update storage
   UserDebtStorage.set(user, tokenAddress, newDebt);
@@ -1023,4 +1090,289 @@ export function canLiquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const health = _calculateAccountHealth(userAddress);
 
   return new Args().add(!health.isHealthy).serialize();
+}
+
+// ============================================
+// Flash Loan Functions
+// ============================================
+
+/**
+ * Execute a flash loan (based on https://github.com/dusaprotocol/v1-core/blob/main/assembly/contracts/Pair.ts)
+ *
+ * @param binaryArgs - Serialized arguments: receiver (string), tokenAddress (string), amount (u256)
+ */
+export function flashLoan(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  whenNotPaused();
+
+  // Check if flash loans are enabled
+  assert(SimpleStorage.getBool(FLASH_LOAN_ENABLED_KEY, true), 'Flash loans are disabled');
+
+  const args = new Args(binaryArgs);
+  const receiverAddress = args.nextString().expect('Receiver address is missing');
+  const tokenAddress = args.nextString().expect('Token address is missing');
+  const amount = args.nextU256().expect('Amount is missing');
+
+  assert(SupportedAssetsStorage.isSupported(tokenAddress), 'Asset not supported');
+  assert(SafeMath.isPositive(amount), 'Amount must be greater than zero');
+
+  // Get available liquidity
+  const totalCollateral = TotalCollateralStorage.get(tokenAddress);
+  const totalBorrows = TotalBorrowsStorage.get(tokenAddress);
+  const availableLiquidity = SafeMath.sub(totalCollateral, totalBorrows);
+  assert(availableLiquidity >= amount, 'Insufficient liquidity for flash loan');
+
+  // Calculate fee
+  const flashLoanFee = SimpleStorage.getU32(FLASH_LOAN_FEE_KEY);
+  const feeAmount = SafeMath.mulBP(amount, flashLoanFee);
+
+  // Get token interface
+  const token = createTokenInterface(tokenAddress);
+
+  // Get balance before transfer
+  const balanceBefore = token.balanceOf(Context.callee());
+
+  // Transfer tokens to receiver
+  token.transfer(new Address(receiverAddress), amount);
+
+  // Call the receiver's flashLoanCallback function
+  // Receiver must implement: flashLoanCallback(sender: Address, token: Address, amount: u256, fee: u256) => bool
+  const receiver = createFlashLoanCallbackInterface(receiverAddress);
+  const callbackSuccess = receiver.flashLoanCallback(
+    Context.caller(),
+    new Address(tokenAddress),
+    amount,
+    feeAmount
+  );
+
+  assert(callbackSuccess, 'Flash loan callback failed');
+
+  // Verify repayment: balance must have increased by at least the fee amount
+  // (receiver must have transferred back amount + fee)
+  const balanceAfter = token.balanceOf(Context.callee());
+  const expectedBalance = SafeMath.add(balanceBefore, feeAmount);
+
+  assert(
+    balanceAfter >= expectedBalance,
+    'Flash loan not repaid: insufficient balance'
+  );
+
+  // Add fee to treasury reserves
+  TreasuryReservesStorage.add(tokenAddress, feeAmount);
+
+  // Emit event
+  generateEvent(createEvent('FlashLoan', [
+    Context.caller().toString(),
+    receiverAddress,
+    tokenAddress,
+    amount.toString(),
+    feeAmount.toString()
+  ]));
+
+  return stringToBytes('Flash loan executed successfully');
+}
+
+// ============================================
+// Treasury & Reserve Factor Admin Functions
+// ============================================
+
+/**
+ * Set reserve factor (owner only)
+ * @param binaryArgs - Serialized arguments: reserveFactor (u32) in basis points
+ */
+export function setReserveFactor(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const reserveFactor = args.nextU32().expect('Reserve factor is missing');
+
+  assert(reserveFactor <= 5000, 'Reserve factor cannot exceed 50%');
+
+  SimpleStorage.setU32(RESERVE_FACTOR_KEY, reserveFactor);
+
+  generateEvent(createEvent('ReserveFactorUpdated', [reserveFactor.toString()]));
+
+  return stringToBytes('Reserve factor updated successfully');
+}
+
+/**
+ * Set treasury address (owner only)
+ * @param binaryArgs - Serialized arguments: treasuryAddress (string)
+ */
+export function setTreasuryAddress(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const treasuryAddress = args.nextString().expect('Treasury address is missing');
+
+  SimpleStorage.setString(TREASURY_KEY, treasuryAddress);
+
+  generateEvent(createEvent('TreasuryAddressUpdated', [treasuryAddress]));
+
+  return stringToBytes('Treasury address updated successfully');
+}
+
+/**
+ * Withdraw treasury reserves (owner only)
+ * @param binaryArgs - Serialized arguments: tokenAddress (string), amount (u256)
+ */
+export function withdrawTreasuryReserves(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const tokenAddress = args.nextString().expect('Token address is missing');
+  const amount = args.nextU256().expect('Amount is missing');
+
+  const currentReserves = TreasuryReservesStorage.get(tokenAddress);
+  assert(currentReserves >= amount, 'Insufficient treasury reserves');
+
+  const treasuryAddress = SimpleStorage.getString(TREASURY_KEY);
+  assert(treasuryAddress != '', 'Treasury address not set');
+
+  // Update reserves
+  TreasuryReservesStorage.set(tokenAddress, SafeMath.sub(currentReserves, amount));
+
+  // Transfer to treasury
+  const token = createTokenInterface(tokenAddress);
+  token.transfer(new Address(treasuryAddress), amount);
+
+  generateEvent(createEvent('TreasuryWithdrawal', [
+    tokenAddress,
+    amount.toString(),
+    treasuryAddress
+  ]));
+
+  return stringToBytes('Treasury reserves withdrawn successfully');
+}
+
+/**
+ * Get treasury reserves for an asset
+ * @param binaryArgs - Serialized arguments: tokenAddress (string)
+ */
+export function getTreasuryReserves(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const tokenAddress = args.nextString().expect('Token address is missing');
+
+  const reserves = TreasuryReservesStorage.get(tokenAddress);
+
+  return new Args().add(reserves).serialize();
+}
+
+/**
+ * Get reserve factor
+ */
+export function getReserveFactor(_: StaticArray<u8>): StaticArray<u8> {
+  const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
+  return new Args().add(reserveFactor).serialize();
+}
+
+// ============================================
+// Liquidation Tuning Admin Functions
+// ============================================
+
+/**
+ * Set close factor (owner only)
+ * @param binaryArgs - Serialized arguments: closeFactor (u32) in basis points
+ */
+export function setCloseFactor(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const closeFactor = args.nextU32().expect('Close factor is missing');
+
+  assert(closeFactor >= 1000 && closeFactor <= 10000, 'Close factor must be between 10% and 100%');
+
+  SimpleStorage.setU32(CLOSE_FACTOR_KEY, closeFactor);
+
+  generateEvent(createEvent('CloseFactorUpdated', [closeFactor.toString()]));
+
+  return stringToBytes('Close factor updated successfully');
+}
+
+/**
+ * Set liquidation bonus range (owner only)
+ * @param binaryArgs - Serialized arguments: minBonus (u32), maxBonus (u32) in basis points
+ */
+export function setLiquidationBonusRange(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const minBonus = args.nextU32().expect('Min bonus is missing');
+  const maxBonus = args.nextU32().expect('Max bonus is missing');
+
+  assert(minBonus <= maxBonus, 'Min bonus must be <= max bonus');
+  assert(maxBonus <= 5000, 'Max bonus cannot exceed 50%');
+
+  SimpleStorage.setU32(LIQUIDATION_BONUS_MIN_KEY, minBonus);
+  SimpleStorage.setU32(LIQUIDATION_BONUS_MAX_KEY, maxBonus);
+
+  generateEvent(createEvent('LiquidationBonusRangeUpdated', [minBonus.toString(), maxBonus.toString()]));
+
+  return stringToBytes('Liquidation bonus range updated successfully');
+}
+
+/**
+ * Get liquidation parameters
+ */
+export function getLiquidationParams(_: StaticArray<u8>): StaticArray<u8> {
+  const closeFactor = SimpleStorage.getU32(CLOSE_FACTOR_KEY);
+  const minBonus = SimpleStorage.getU32(LIQUIDATION_BONUS_MIN_KEY);
+  const maxBonus = SimpleStorage.getU32(LIQUIDATION_BONUS_MAX_KEY);
+  const liquidationThreshold = SimpleStorage.getU32(LIQUIDATION_THRESHOLD_KEY);
+
+  return new Args()
+    .add(closeFactor)
+    .add(minBonus)
+    .add(maxBonus)
+    .add(liquidationThreshold)
+    .serialize();
+}
+
+// ============================================
+// Flash Loan Admin Functions
+// ============================================
+
+/**
+ * Set flash loan fee (owner only)
+ * @param binaryArgs - Serialized arguments: fee (u32) in basis points
+ */
+export function setFlashLoanFee(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const fee = args.nextU32().expect('Fee is missing');
+
+  assert(fee <= 100, 'Flash loan fee cannot exceed 1%');
+
+  SimpleStorage.setU32(FLASH_LOAN_FEE_KEY, fee);
+
+  generateEvent(createEvent('FlashLoanFeeUpdated', [fee.toString()]));
+
+  return stringToBytes('Flash loan fee updated successfully');
+}
+
+/**
+ * Enable/disable flash loans (owner only)
+ * @param binaryArgs - Serialized arguments: enabled (bool)
+ */
+export function setFlashLoanEnabled(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const enabled = args.nextBool().expect('Enabled flag is missing');
+
+  SimpleStorage.setBool(FLASH_LOAN_ENABLED_KEY, enabled);
+
+  generateEvent(createEvent('FlashLoanEnabledUpdated', [enabled ? 'true' : 'false']));
+
+  return stringToBytes(enabled ? 'Flash loans enabled' : 'Flash loans disabled');
+}
+
+/**
+ * Get flash loan parameters
+ */
+export function getFlashLoanParams(_: StaticArray<u8>): StaticArray<u8> {
+  const fee = SimpleStorage.getU32(FLASH_LOAN_FEE_KEY);
+  const enabled = SimpleStorage.getBool(FLASH_LOAN_ENABLED_KEY, true);
+
+  return new Args().add(fee).add(enabled).serialize();
 }

@@ -31,13 +31,30 @@ export const DEFAULT_ASSETS = [
     isWrappedNative: false,
     logo: 'https://assets.coingecko.com/coins/images/6319/standard/usdc.png',
   },
-  // {
-  //   symbol: 'WETH',
-  //   name: 'Wrapped Ether',
-  //   address: 'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk', // WETH address
-  //   decimals: 18,
-  //   isWrappedNative: false,
-  // },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: 'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk', // WETH address - Update after deployment
+    decimals: 18,
+    isWrappedNative: false,
+    logo: 'https://assets.coingecko.com/coins/images/279/standard/ethereum.png',
+  },
+  {
+    symbol: 'DUSA',
+    name: 'Dusa Token',
+    address: 'AS12WBfwEXfV5WQ41cBcwL6EzDZgWt7QdaBQ6ENoshXigKLJrJ7WS',
+    decimals: 18,
+    isWrappedNative: false,
+    logo: 'https://assets.coingecko.com/markets/images/1563/large/Dusa_Labs_logo_carre%CC%81_%281%29.png?1713853529',
+  },
+  {
+    symbol: 'WBTC',
+    name: 'Wrapped Bitcoin',
+    address: 'AS1ZXy3nvqXAMm2w6viAg7frte6cZfJM8hoMvWf4KoKDzvLzYKqE',
+    decimals: 8,
+    isWrappedNative: false,
+    logo: 'https://assets.coingecko.com/coins/images/7598/standard/wrapped_bitcoin_wbtc.png',
+  },
 ];
 
 // Protocol parameters (basis points)
@@ -46,8 +63,20 @@ export const PROTOCOL_PARAMS = {
   LIQUIDATION_THRESHOLD: 8000, // 80%
   LIQUIDATION_PENALTY: 1000, // 10%
   BASIS_POINTS: 10000,
+  // Reserve Factor
+  RESERVE_FACTOR: 1000, // 10% of interest goes to protocol
+  // Liquidation Tuning
+  CLOSE_FACTOR: 5000, // 50% max liquidation at once
+  LIQUIDATION_BONUS_MIN: 500, // 5% min bonus
+  LIQUIDATION_BONUS_MAX: 1500, // 15% max bonus
+  // Flash Loans
+  FLASH_LOAN_FEE: 9, // 0.09%
 };
 
 // UI constants
 export const DECIMAL_PRECISION = 4;
 export const REFRESH_INTERVAL = 10000; // 10 seconds
+
+// Analytics constants
+export const ANALYTICS_STORAGE_KEY = 'massa_lending_analytics';
+export const MAX_ANALYTICS_HISTORY = 1000; // Max number of data points to store
