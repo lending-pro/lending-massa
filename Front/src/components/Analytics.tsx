@@ -86,7 +86,7 @@ export default function Analytics() {
         const info = await getMarketInfo(asset.address, asset.decimals);
         if (info) {
           const tvl = info.tvlUSD || 0n;
-          const borrowed = info.totalBorrows || 0n;
+          const borrowed = info.borrowedUSD || 0n;
           const available = info.availableUSD || 0n;
 
           totalTVL += tvl;

@@ -541,6 +541,11 @@ export function useLendingPool() {
           ? (totalCollateral * price) / BigInt(10 ** decimals)
           : 0n;
 
+        // Calculate borrowed in USD
+        const borrowedUSD = totalBorrows > 0n && price > 0n
+          ? (totalBorrows * price) / BigInt(10 ** decimals)
+          : 0n;
+
         // Calculate available liquidity
         const available = totalCollateral - totalBorrows;
         const availableUSD = available > 0n && price > 0n
@@ -560,6 +565,7 @@ export function useLendingPool() {
           supplyAPY,
           utilization,
           tvlUSD,
+          borrowedUSD,
           available,
           availableUSD,
           price,
