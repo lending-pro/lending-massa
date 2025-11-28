@@ -418,7 +418,7 @@ export function useLendingPool() {
       const PRICES: { [key: string]: bigint } = {
         'AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ': 1000000000000000000n, // USDC = $1
         'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU': 190000000000000000n,  // WMAS = $0.19
-        'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk': 2500000000000000000000n, // WETH = $2500
+        'AS1ZXy3nvqXAMm2w6viAg7frte6cZfJM8hoMvWf4KoKDzvLzYKqE': 100000000000000000000000n // WBTC = $100000
       };
 
       return PRICES[tokenAddress] || 0n;

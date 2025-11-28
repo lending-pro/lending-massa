@@ -5,16 +5,25 @@ import { Args, Web3Provider, Account, SmartContract } from '@massalabs/massa-web
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+// Token addresses
+const WMAS_ADDRESS = 'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU';
+const USDC_ADDRESS = 'AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ';
+const WBTC_ADDRESS = 'AS1ZXy3nvqXAMm2w6viAg7frte6cZfJM8hoMvWf4KoKDzvLzYKqE';
+
 async function main() {
   const account = await Account.fromEnv();
   const provider = Web3Provider.buildnet(account);
   const contract = new SmartContract(provider, process.env.LENDING_POOL_ADDRESS || '');
   const userAddress = 'AU1cBirTno1FrMVpUMT96KiQ97wBqqM1z9uJLr3XZKQwJjFLPEar';
-  const usdcAddress = process.env.USDC_TOKEN_ADDRESS || '';
+  const usdcAddress = process.env.USDC_TOKEN_ADDRESS || USDC_ADDRESS;
+  const wbtcAddress = WBTC_ADDRESS;
+  const wmasAddress = process.env.WMAS_TOKEN_ADDRESS || WMAS_ADDRESS;
 
   console.log('Contract:', process.env.LENDING_POOL_ADDRESS);
   console.log('User:', userAddress);
   console.log('USDC:', usdcAddress);
+  console.log('WBTC:', wbtcAddress);
+  console.log('WMAS:', wmasAddress);
 
   // Test getUserCollateral
   console.log('\n--- getUserCollateral ---');
@@ -52,6 +61,27 @@ async function main() {
   const totalResult = await contract.read('getTotalCollateral', totalArgs.serialize());
   const totalColl = new Args(totalResult.value).nextU256();
   console.log('Total USDC Collateral in pool:', totalColl.toString());
+
+  // Test WBTC price
+  console.log('\n--- getAssetPrice WBTC ---');
+  const wbtcPriceArgs = new Args().addString(wbtcAddress);
+  const wbtcPriceResult = await contract.read('getAssetPrice', wbtcPriceArgs.serialize());
+  const wbtcPrice = new Args(wbtcPriceResult.value).nextU256();
+  console.log('WBTC Price:', wbtcPrice.toString());
+
+  // Test WBTC collateral
+  console.log('\n--- getUserCollateral WBTC ---');
+  const wbtcCollArgs = new Args().addString(userAddress).addString(wbtcAddress);
+  const wbtcCollResult = await contract.read('getUserCollateral', wbtcCollArgs.serialize());
+  const wbtcCollateral = new Args(wbtcCollResult.value).nextU256();
+  console.log('User WBTC Collateral:', wbtcCollateral.toString());
+
+  // Test total WBTC collateral in pool
+  console.log('\n--- getTotalCollateral WBTC ---');
+  const wbtcTotalArgs = new Args().addString(wbtcAddress);
+  const wbtcTotalResult = await contract.read('getTotalCollateral', wbtcTotalArgs.serialize());
+  const wbtcTotalColl = new Args(wbtcTotalResult.value).nextU256();
+  console.log('Total WBTC Collateral in pool:', wbtcTotalColl.toString());
 
   // Try to borrow 1 USDC
   console.log('\n--- Attempting to borrow 1 USDC ---');

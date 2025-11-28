@@ -48,6 +48,16 @@ function getPairsConfig(): PairConfig[] {
     });
   }
 
+  // MAS/WETH pair (if configured)
+  const wbtcUsdcPair = process.env.WBTC_USDC_PAIR;
+  if (wbtcUsdcPair) {
+    pairs.push({
+      name: 'WBTC/USDC',
+      address: wbtcUsdcPair,
+      newOracleLength: DEFAULT_ORACLE_LENGTH,
+    });
+  }
+
   return pairs;
 }
 

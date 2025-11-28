@@ -27,6 +27,11 @@ const ORACLE_PAIRS: OraclePairConfig[] = [
     tokenAddress: process.env.WMAS_TOKEN_ADDRESS || '',
     dusaPairAddress: process.env.MAS_USDC_PAIR || '',
   },
+  {
+    tokenSymbol: 'WBTC',
+    tokenAddress: process.env.WBTC_TOKEN_ADDRESS || '',
+    dusaPairAddress: process.env.WBTC_USDC_PAIR || '',
+  },
   // {
   //   tokenSymbol: 'WETH',
   //   tokenAddress: process.env.WETH_TOKEN_ADDRESS || '',

@@ -13,6 +13,7 @@ async function main() {
   const lendingPoolAddress = process.env.LENDING_POOL_ADDRESS;
   const wmasAddress = process.env.WMAS_TOKEN_ADDRESS;
   const usdcAddress = process.env.USDC_TOKEN_ADDRESS;
+  const wbtcAddress = process.env.WBTC_TOKEN_ADDRESS;
 
   if (!lendingPoolAddress) {
     throw new Error('LENDING_POOL_ADDRESS not set');
@@ -54,6 +55,24 @@ async function main() {
       });
 
       console.log('WMAS price set to $0.19');
+    } catch (e: any) {
+      console.log('Error:', e.message);
+    }
+  }
+
+  // Set WBTC price to $100 000 (100000e18)
+  if (wbtcAddress) {
+    console.log('\nSetting WBTC price to $100 000...');
+    try {
+      const wbtcPrice = BigInt('100000000000000000000000'); // 100000e18 = $100 000
+      const args = new Args().addString(wbtcAddress).addU256(wbtcPrice);
+
+      await contract.call('setAssetPrice', args.serialize(), {
+        maxGas: BigInt(2_000_000_000),
+        coins: BigInt(100_000_000),
+      });
+
+      console.log('WBTC price set to $100 000');
     } catch (e: any) {
       console.log('Error:', e.message);
     }

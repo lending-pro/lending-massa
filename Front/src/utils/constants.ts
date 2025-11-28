@@ -1,5 +1,5 @@
 // Contract addresses - Update these after deployment
-export const LENDING_POOL_ADDRESS = 'AS12Y7r6TgqA5jViufV9BQ37E3AsBEgCxaFUvk7RFSGQwBCTBHUrE'; // Replace with deployed contract address
+export const LENDING_POOL_ADDRESS = 'AS12GPWH3kEheitPkFqECFtbHT2JtQ8Bo4TSqyirAFrRknmYRTAzQ'; // Replace with deployed contract address
 
 // WMAS contract address (for wrapping/unwrapping native MAS)
 export const WMAS_ADDRESS = 'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU';
@@ -13,7 +13,7 @@ export const MASSA_NETWORK = {
 // RPC URL for buildnet
 export const RPC_URL = 'https://buildnet.massa.net/api/v2';
 
-// Default assets - Update with actual token addresses
+// Default assets
 export const DEFAULT_ASSETS = [
   {
     symbol: 'WMAS',
@@ -31,22 +31,22 @@ export const DEFAULT_ASSETS = [
     isWrappedNative: false,
     logo: 'https://assets.coingecko.com/coins/images/6319/standard/usdc.png',
   },
-  {
-    symbol: 'WETH',
-    name: 'Wrapped Ether',
-    address: 'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk', // WETH address - Update after deployment
-    decimals: 18,
-    isWrappedNative: false,
-    logo: 'https://assets.coingecko.com/coins/images/279/standard/ethereum.png',
-  },
-  {
-    symbol: 'DUSA',
-    name: 'Dusa Token',
-    address: 'AS12WBfwEXfV5WQ41cBcwL6EzDZgWt7QdaBQ6ENoshXigKLJrJ7WS',
-    decimals: 18,
-    isWrappedNative: false,
-    logo: 'https://assets.coingecko.com/markets/images/1563/large/Dusa_Labs_logo_carre%CC%81_%281%29.png?1713853529',
-  },
+  //  {
+  //   symbol: 'WETH',
+  //   name: 'Wrapped Ether',
+  //   address: 'AS12rcqHGQ3bPPhnjBZsYiANv9TZxYp96M7r49iTMUrX8XCJQ8Wrk', // WETH address - Update after deployment
+  //   decimals: 18,
+  //   isWrappedNative: false,
+  //   logo: 'https://assets.coingecko.com/coins/images/279/standard/ethereum.png',
+  // }, // No WETH - USDC
+  // {
+  //   symbol: 'DUSA',
+  //   name: 'Dusa Token',
+  //   address: 'AS12WBfwEXfV5WQ41cBcwL6EzDZgWt7QdaBQ6ENoshXigKLJrJ7WS',
+  //   decimals: 18,
+  //   isWrappedNative: false,
+  //   logo: 'https://assets.coingecko.com/markets/images/1563/large/Dusa_Labs_logo_carre%CC%81_%281%29.png?1713853529',
+  // }, // No DUSA - USDC
   {
     symbol: 'WBTC',
     name: 'Wrapped Bitcoin',
