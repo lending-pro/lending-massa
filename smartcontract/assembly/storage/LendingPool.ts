@@ -338,6 +338,64 @@ export class TreasuryReservesStorage {
 }
 
 /**
+ * Storage for supply index per asset (for calculating depositor interest)
+ * The supply index starts at 1e18 and grows as interest accrues
+ * Key: token_address
+ * Value: u256 (supply index scaled by 1e18)
+ */
+export class SupplyIndexStorage {
+  private static PREFIX: string = 'supply_index:';
+
+  static getKey(tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + tokenAddress).serialize();
+  }
+
+  static get(tokenAddress: string): u256 {
+    const key = this.getKey(tokenAddress);
+    if (!Storage.has<StaticArray<u8>>(key)) {
+      // Default to 1e18 (index starts at 1.0)
+      return u256.fromU64(1000000000000000000);
+    }
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
+  }
+
+  static set(tokenAddress: string, index: u256): void {
+    const key = this.getKey(tokenAddress);
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(index));
+  }
+}
+
+/**
+ * Storage for user's supply index at time of deposit
+ * Used to calculate earned interest: userInterest = userCollateral * (currentIndex / userIndex - 1)
+ * Key: user_address:token_address
+ * Value: u256 (supply index when user deposited)
+ */
+export class UserSupplyIndexStorage {
+  private static PREFIX: string = 'user_supply_index:';
+
+  static getKey(userAddress: string, tokenAddress: string): StaticArray<u8> {
+    return new Args().add(this.PREFIX + userAddress + ':' + tokenAddress).serialize();
+  }
+
+  static get(userAddress: string, tokenAddress: string): u256 {
+    const key = this.getKey(userAddress, tokenAddress);
+    if (!Storage.has<StaticArray<u8>>(key)) {
+      // Default to 1e18 if not set
+      return u256.fromU64(1000000000000000000);
+    }
+    const data = Storage.get<StaticArray<u8>>(key);
+    return bytesToU256(data);
+  }
+
+  static set(userAddress: string, tokenAddress: string, index: u256): void {
+    const key = this.getKey(userAddress, tokenAddress);
+    Storage.set<StaticArray<u8>>(key, u256ToBytes(index));
+  }
+}
+
+/**
  * Helper functions for simple storage operations
  */
 export class SimpleStorage {

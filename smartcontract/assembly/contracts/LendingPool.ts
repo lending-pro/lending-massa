@@ -42,6 +42,8 @@ import {
   TotalBorrowsStorage,
   UserAssetsStorage,
   TreasuryReservesStorage,
+  SupplyIndexStorage,
+  UserSupplyIndexStorage,
   SimpleStorage
 } from '../storage/LendingPool';
 import { UserPosition, AccountHealth } from '../structs/UserPosition';
@@ -167,6 +169,7 @@ export function constructor(binaryArgs: StaticArray<u8>): void {
  */
 export function depositCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   whenNotPaused();
+  nonReentrantStart();
 
   const args = new Args(binaryArgs);
   const tokenAddress = args.nextString().expect('Token address is missing');
@@ -179,14 +182,35 @@ export function depositCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> 
   const caller = Context.caller().toString();
   const currentTime = Context.timestamp();
 
+  // Update supply index first (accrue interest for all depositors)
+  _updateSupplyIndex(tokenAddress);
+
   // Transfer tokens from caller to contract
   const token = createTokenInterface(tokenAddress);
   token.transferFrom(new Address(caller), Context.callee(), amount);
 
-  // Update user collateral
+  // Get current supply index
+  const currentIndex = SupplyIndexStorage.get(tokenAddress);
+
+  // If user has existing collateral, accrue their interest first
   const currentCollateral = UserCollateralStorage.get(caller, tokenAddress);
-  const newCollateral = SafeMath.add(currentCollateral, amount);
+  let newCollateral = amount;
+
+  if (SafeMath.isPositive(currentCollateral)) {
+    // Calculate user's actual collateral with accrued interest
+    const userIndex = UserSupplyIndexStorage.get(caller, tokenAddress);
+    // actualCollateral = currentCollateral × currentIndex / userIndex
+    const actualCollateral = SafeMath.div(
+      SafeMath.mul(currentCollateral, currentIndex),
+      userIndex
+    );
+    newCollateral = SafeMath.add(actualCollateral, amount);
+  }
+
   UserCollateralStorage.set(caller, tokenAddress, newCollateral);
+
+  // Update user's supply index to current (they are now "caught up")
+  UserSupplyIndexStorage.set(caller, tokenAddress, currentIndex);
 
   // Track this asset for the user
   UserAssetsStorage.addAsset(caller, tokenAddress);
@@ -205,6 +229,7 @@ export function depositCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> 
     amount.toString()
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Collateral deposited successfully');
 }
 
@@ -223,16 +248,34 @@ export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8>
   const caller = Context.caller().toString();
   const currentTime = Context.timestamp();
 
-  // Get current collateral
-  const currentCollateral = UserCollateralStorage.get(caller, tokenAddress);
-  assert(currentCollateral >= amount, 'Insufficient collateral');
+  // Update supply index first (accrue interest for all depositors)
+  _updateSupplyIndex(tokenAddress);
+
+  // Get current supply index
+  const currentIndex = SupplyIndexStorage.get(tokenAddress);
+
+  // Get user's stored collateral
+  const storedCollateral = UserCollateralStorage.get(caller, tokenAddress);
+
+  // Calculate user's actual collateral with accrued interest
+  // actualCollateral = storedCollateral × currentIndex / userIndex
+  const userIndex = UserSupplyIndexStorage.get(caller, tokenAddress);
+  const actualCollateral = SafeMath.div(
+    SafeMath.mul(storedCollateral, currentIndex),
+    userIndex
+  );
+
+  assert(actualCollateral >= amount, 'Insufficient collateral');
 
   // Update user debt with accrued interest before checking health
   _accrueInterest(caller, tokenAddress);
 
-  // Calculate new collateral
-  const newCollateral = SafeMath.sub(currentCollateral, amount);
+  // Calculate new collateral after withdrawal
+  const newCollateral = SafeMath.sub(actualCollateral, amount);
   UserCollateralStorage.set(caller, tokenAddress, newCollateral);
+
+  // Update user's supply index to current (they are now "caught up")
+  UserSupplyIndexStorage.set(caller, tokenAddress, currentIndex);
 
   // Check account health after withdrawal
   const health = _calculateAccountHealth(caller);
@@ -543,6 +586,85 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 // Internal Helper Functions
 // ============================================
 
+// Last time supply index was updated per asset
+const SUPPLY_INDEX_LAST_UPDATE_PREFIX = 'supply_index_last_update:';
+
+/**
+ * Updates the global supply index for an asset
+ * Supply interest = borrowRate × utilization × (1 - reserveFactor)
+ * This should be called before any deposit/withdraw operation
+ * @param tokenAddress - Token address
+ */
+function _updateSupplyIndex(tokenAddress: string): void {
+  const lastUpdateKey = SUPPLY_INDEX_LAST_UPDATE_PREFIX + tokenAddress;
+  const lastUpdate = SimpleStorage.getU64(lastUpdateKey, 0);
+  const currentTime = Context.timestamp();
+
+  if (currentTime <= lastUpdate) {
+    return;
+  }
+
+  const totalCollateral = TotalCollateralStorage.get(tokenAddress);
+  const totalBorrows = TotalBorrowsStorage.get(tokenAddress);
+
+  // Only accrue if there are deposits and borrows
+  if (SafeMath.isZero(totalCollateral) || SafeMath.isZero(totalBorrows)) {
+    SimpleStorage.setU64(lastUpdateKey, currentTime);
+    return;
+  }
+
+  // Calculate utilization and rates
+  const utilization = InterestRateModel.calculateUtilization(totalBorrows, totalCollateral);
+  const baseRate = SimpleStorage.getU32(BASE_RATE_KEY);
+  const optimalUtil = SimpleStorage.getU32(OPTIMAL_UTILIZATION_KEY);
+  const slope1 = SimpleStorage.getU32(SLOPE1_KEY);
+  const slope2 = SimpleStorage.getU32(SLOPE2_KEY);
+  const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
+
+  const borrowRate = InterestRateModel.calculateBorrowRate(
+    utilization,
+    baseRate,
+    optimalUtil,
+    slope1,
+    slope2
+  );
+
+  // Supply rate = borrowRate × utilization × (1 - reserveFactor) / 10000
+  // In basis points: supplyRate = borrowRate × utilization × (10000 - reserveFactor) / 10000 / 10000
+  const supplyRateFactor = (10000 - reserveFactor);
+  const supplyRate = (borrowRate * utilization * supplyRateFactor) / (10000 * 10000);
+
+  if (supplyRate == 0) {
+    SimpleStorage.setU64(lastUpdateKey, currentTime);
+    return;
+  }
+
+  // Calculate time elapsed
+  const timeDelta = currentTime - lastUpdate;
+  if (timeDelta == 0) {
+    return;
+  }
+
+  // Update supply index
+  // newIndex = currentIndex × (1 + supplyRate × timeDelta / SECONDS_PER_YEAR / 10000)
+  const currentIndex = SupplyIndexStorage.get(tokenAddress);
+  const SECONDS_PER_YEAR: u64 = 31557600;
+  const INDEX_PRECISION = u256.fromU64(1000000000000000000); // 1e18
+
+  // indexIncrease = currentIndex × supplyRate × timeDelta / (SECONDS_PER_YEAR × 10000)
+  const timeInSeconds = timeDelta / 1000;
+  const numerator = SafeMath.mul(
+    SafeMath.mul(currentIndex, u256.from(supplyRate)),
+    u256.from(timeInSeconds)
+  );
+  const denominator = SafeMath.mul(u256.from(SECONDS_PER_YEAR), u256.from(10000));
+  const indexIncrease = SafeMath.div(numerator, denominator);
+
+  const newIndex = SafeMath.add(currentIndex, indexIncrease);
+  SupplyIndexStorage.set(tokenAddress, newIndex);
+  SimpleStorage.setU64(lastUpdateKey, currentTime);
+}
+
 /**
  * Accrues interest on a user's debt and collects protocol fees
  * @param user - User address
@@ -635,9 +757,21 @@ function _calculateAccountHealth(user: string): AccountHealth {
       continue;
     }
 
-    // Get collateral and debt for this asset first
-    const collateral = UserCollateralStorage.get(user, tokenAddress);
+    // Get stored collateral and debt for this asset
+    const storedCollateral = UserCollateralStorage.get(user, tokenAddress);
     let debt = UserDebtStorage.get(user, tokenAddress);
+
+    // Calculate actual collateral with accrued interest
+    let collateral = storedCollateral;
+    if (SafeMath.isPositive(storedCollateral)) {
+      const currentIndex = _calculateCurrentSupplyIndex(tokenAddress);
+      const userIndex = UserSupplyIndexStorage.get(user, tokenAddress);
+      // actualCollateral = storedCollateral × currentIndex / userIndex
+      collateral = SafeMath.div(
+        SafeMath.mul(storedCollateral, currentIndex),
+        userIndex
+      );
+    }
 
     // Get asset price
     const price = _getAssetPrice(tokenAddress);
@@ -654,7 +788,7 @@ function _calculateAccountHealth(user: string): AccountHealth {
       continue;
     }
 
-    // Calculate collateral value for this asset
+    // Calculate collateral value for this asset (with accrued interest)
     if (SafeMath.isPositive(collateral)) {
       // Get token decimals to normalize value to 18 decimals
       const token = createTokenInterface(tokenAddress);
@@ -802,7 +936,7 @@ function _getAssetPrice(tokenAddress: string): u256 {
 // ============================================
 
 /**
- * Get user's collateral balance for a specific token
+ * Get user's collateral balance for a specific token (with accrued interest)
  * @param binaryArgs - Serialized arguments: userAddress (string), tokenAddress (string)
  */
 export function getUserCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> {
@@ -810,9 +944,91 @@ export function getUserCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> 
   const userAddress = args.nextString().expect('User address is missing');
   const tokenAddress = args.nextString().expect('Token address is missing');
 
-  const collateral = UserCollateralStorage.get(userAddress, tokenAddress);
+  const storedCollateral = UserCollateralStorage.get(userAddress, tokenAddress);
 
-  return new Args().add(collateral).serialize();
+  if (SafeMath.isZero(storedCollateral)) {
+    return new Args().add(u256.Zero).serialize();
+  }
+
+  // Calculate actual collateral with accrued interest
+  // First, simulate updating the supply index without actually writing
+  const currentIndex = _calculateCurrentSupplyIndex(tokenAddress);
+  const userIndex = UserSupplyIndexStorage.get(userAddress, tokenAddress);
+
+  // actualCollateral = storedCollateral × currentIndex / userIndex
+  const actualCollateral = SafeMath.div(
+    SafeMath.mul(storedCollateral, currentIndex),
+    userIndex
+  );
+
+  return new Args().add(actualCollateral).serialize();
+}
+
+/**
+ * Calculate current supply index without writing to storage (for view functions)
+ * @param tokenAddress - Token address
+ * @returns Current supply index
+ */
+function _calculateCurrentSupplyIndex(tokenAddress: string): u256 {
+  const lastUpdateKey = SUPPLY_INDEX_LAST_UPDATE_PREFIX + tokenAddress;
+  const lastUpdate = SimpleStorage.getU64(lastUpdateKey, 0);
+  const currentTime = Context.timestamp();
+
+  const currentIndex = SupplyIndexStorage.get(tokenAddress);
+
+  if (currentTime <= lastUpdate) {
+    return currentIndex;
+  }
+
+  const totalCollateral = TotalCollateralStorage.get(tokenAddress);
+  const totalBorrows = TotalBorrowsStorage.get(tokenAddress);
+
+  // Only accrue if there are deposits and borrows
+  if (SafeMath.isZero(totalCollateral) || SafeMath.isZero(totalBorrows)) {
+    return currentIndex;
+  }
+
+  // Calculate utilization and rates
+  const utilization = InterestRateModel.calculateUtilization(totalBorrows, totalCollateral);
+  const baseRate = SimpleStorage.getU32(BASE_RATE_KEY);
+  const optimalUtil = SimpleStorage.getU32(OPTIMAL_UTILIZATION_KEY);
+  const slope1 = SimpleStorage.getU32(SLOPE1_KEY);
+  const slope2 = SimpleStorage.getU32(SLOPE2_KEY);
+  const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
+
+  const borrowRate = InterestRateModel.calculateBorrowRate(
+    utilization,
+    baseRate,
+    optimalUtil,
+    slope1,
+    slope2
+  );
+
+  // Supply rate = borrowRate × utilization × (1 - reserveFactor) / 10000
+  const supplyRateFactor = (10000 - reserveFactor);
+  const supplyRate = (borrowRate * utilization * supplyRateFactor) / (10000 * 10000);
+
+  if (supplyRate == 0) {
+    return currentIndex;
+  }
+
+  // Calculate time elapsed
+  const timeDelta = currentTime - lastUpdate;
+  if (timeDelta == 0) {
+    return currentIndex;
+  }
+
+  // Calculate new index
+  const SECONDS_PER_YEAR: u64 = 31557600;
+  const timeInSeconds = timeDelta / 1000;
+  const numerator = SafeMath.mul(
+    SafeMath.mul(currentIndex, u256.from(supplyRate)),
+    u256.from(timeInSeconds)
+  );
+  const denominator = SafeMath.mul(u256.from(SECONDS_PER_YEAR), u256.from(10000));
+  const indexIncrease = SafeMath.div(numerator, denominator);
+
+  return SafeMath.add(currentIndex, indexIncrease);
 }
 
 /**
@@ -886,6 +1102,42 @@ export function getBorrowRate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   );
 
   return new Args().add(borrowRate).serialize();
+}
+
+/**
+ * Get current supply rate for an asset (APY for depositors)
+ * Supply rate = borrowRate × utilization × (1 - reserveFactor)
+ * @param binaryArgs - Serialized arguments: tokenAddress (string)
+ * @returns Serialized supply rate in basis points (u32)
+ */
+export function getSupplyRate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const tokenAddress = args.nextString().expect('Token address is missing');
+
+  const totalBorrows = TotalBorrowsStorage.get(tokenAddress);
+  const totalCollateral = TotalCollateralStorage.get(tokenAddress);
+  const utilization = InterestRateModel.calculateUtilization(totalBorrows, totalCollateral);
+
+  const baseRate = SimpleStorage.getU32(BASE_RATE_KEY);
+  const optimalUtil = SimpleStorage.getU32(OPTIMAL_UTILIZATION_KEY);
+  const slope1 = SimpleStorage.getU32(SLOPE1_KEY);
+  const slope2 = SimpleStorage.getU32(SLOPE2_KEY);
+  const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
+
+  const borrowRate = InterestRateModel.calculateBorrowRate(
+    utilization,
+    baseRate,
+    optimalUtil,
+    slope1,
+    slope2
+  );
+
+  // Supply rate = borrowRate × utilization × (1 - reserveFactor) / 10000 / 10000
+  // Result in basis points
+  const supplyRateFactor = (10000 - reserveFactor);
+  const supplyRate: u32 = u32((u64(borrowRate) * u64(utilization) * u64(supplyRateFactor)) / (10000 * 10000));
+
+  return new Args().add(supplyRate).serialize();
 }
 
 /**
@@ -1035,6 +1287,26 @@ export function unpause(_: StaticArray<u8>): StaticArray<u8> {
 export function getOwner(_: StaticArray<u8>): StaticArray<u8> {
   const owner = SimpleStorage.getString(OWNER_KEY);
   return stringToBytes(owner);
+}
+
+/**
+ * Transfer ownership to a new address (owner only)
+ * @param binaryArgs - Serialized arguments: newOwner (string)
+ */
+export function transferOwnership(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  onlyOwner();
+
+  const args = new Args(binaryArgs);
+  const newOwner = args.nextString().expect('New owner address is missing');
+
+  assert(newOwner != '', 'New owner cannot be empty');
+
+  const oldOwner = SimpleStorage.getString(OWNER_KEY);
+  SimpleStorage.setString(OWNER_KEY, newOwner);
+
+  generateEvent(createEvent('OwnershipTransferred', [oldOwner, newOwner]));
+
+  return stringToBytes('Ownership transferred successfully');
 }
 
 /**
@@ -1298,6 +1570,16 @@ export function withdrawTreasuryReserves(binaryArgs: StaticArray<u8>): StaticArr
 
   const currentReserves = TreasuryReservesStorage.get(tokenAddress);
   assert(currentReserves >= amount, 'Insufficient treasury reserves');
+
+  // CRITICAL: Check that withdrawal won't drain user funds
+  // Available liquidity = totalCollateral - totalBorrows
+  const totalCollateral = TotalCollateralStorage.get(tokenAddress);
+  const totalBorrows = TotalBorrowsStorage.get(tokenAddress);
+  const availableLiquidity = totalCollateral > totalBorrows
+    ? SafeMath.sub(totalCollateral, totalBorrows)
+    : u256.Zero;
+
+  assert(availableLiquidity >= amount, 'Insufficient pool liquidity for treasury withdrawal');
 
   const treasuryAddress = SimpleStorage.getString(TREASURY_KEY);
   assert(treasuryAddress != '', 'Treasury address not set');

@@ -282,6 +282,26 @@ export function useLendingPool() {
     []
   );
 
+  const getSupplyRate = useCallback(
+    async (tokenAddress: string): Promise<number> => {
+      try {
+        const args = new Args().addString(tokenAddress);
+        const result = await readSmartContract(LENDING_POOL_ADDRESS, 'getSupplyRate', args);
+
+        if (result?.value && result.value.length >= 4) {
+          const resultArgs = new Args(result.value);
+          const rate = resultArgs.nextU32();
+          return Number(rate);
+        }
+        return 0; // No supply interest if no utilization
+      } catch (err) {
+        console.error('Get supply rate error:', err);
+        return 0;
+      }
+    },
+    []
+  );
+
   const getAccountHealth = useCallback(
     async (userAddress: string): Promise<{ collateralValue: bigint; debtValue: bigint; healthFactor: bigint; isHealthy: boolean } | null> => {
       try {
@@ -503,10 +523,11 @@ export function useLendingPool() {
   const getMarketInfo = useCallback(
     async (tokenAddress: string, decimals: number) => {
       try {
-        const [totalCollateral, totalBorrows, borrowRateBP, price] = await Promise.all([
+        const [totalCollateral, totalBorrows, borrowRateBP, supplyRateBP, price] = await Promise.all([
           getTotalCollateral(tokenAddress),
           getTotalBorrows(tokenAddress),
           getBorrowRate(tokenAddress),
+          getSupplyRate(tokenAddress),
           getAssetPrice(tokenAddress),
         ]);
 
@@ -526,14 +547,15 @@ export function useLendingPool() {
           ? (available * price) / BigInt(10 ** decimals)
           : 0n;
 
-        // Supply APY = Borrow APY × Utilization Rate
+        // Get APY from contract rates (basis points to percentage)
         const borrowAPY = calculateAPY(borrowRateBP);
-        const supplyAPY = borrowAPY * (utilization / 100);
+        const supplyAPY = calculateAPY(supplyRateBP);
 
         return {
           totalCollateral,
           totalBorrows,
           borrowRateBP,
+          supplyRateBP,
           borrowAPY,
           supplyAPY,
           utilization,
@@ -547,7 +569,7 @@ export function useLendingPool() {
         return null;
       }
     },
-    [getTotalCollateral, getTotalBorrows, getBorrowRate, getAssetPrice]
+    [getTotalCollateral, getTotalBorrows, getBorrowRate, getSupplyRate, getAssetPrice]
   );
 
   const getTokenBalance = useCallback(
@@ -744,6 +766,7 @@ export function useLendingPool() {
     getUserCollateral,
     getUserDebt,
     getBorrowRate,
+    getSupplyRate,
     getUserPosition,
     getAccountHealth,
     getTotalCollateral,
