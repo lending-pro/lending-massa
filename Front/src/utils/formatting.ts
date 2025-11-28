@@ -43,22 +43,24 @@ export function formatPercentage(basisPoints: number | string): string {
 }
 
 /**
- * Calculate APY from APR (compound interest)
- * APR is in basis points (10000 = 100%)
+ * Calculate APR from basis points (simple interest - matches smart contract)
+ * Basis points: 10000 = 100%
+ *
+ * Note: Smart contract uses simple interest, NOT compound interest.
+ * This function returns the simple APR as a percentage.
  */
 export function calculateAPY(aprBasisPoints: number): number {
-  const apr = aprBasisPoints / 10000; // Convert to decimal
-  const compoundingPeriods = 365; // Daily compounding
-  const apy = Math.pow(1 + apr / compoundingPeriods, compoundingPeriods) - 1;
-  return apy * 100; // Return as percentage
+  // Simple interest: just convert basis points to percentage
+  // 200 basis points = 2%
+  return aprBasisPoints / 100;
 }
 
 /**
- * Format APY from APR basis points
+ * Format APR from basis points (simple interest - matches smart contract)
  */
 export function formatAPY(aprBasisPoints: number): string {
-  const apy = calculateAPY(aprBasisPoints);
-  return apy.toFixed(2) + '%';
+  const apr = calculateAPY(aprBasisPoints);
+  return apr.toFixed(2) + '%';
 }
 
 /**

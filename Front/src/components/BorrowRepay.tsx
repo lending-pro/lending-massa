@@ -8,7 +8,7 @@ import { parseAmount, formatPercentage, formatAmount } from '../utils/formatting
 export default function BorrowRepay() {
   const { account, connected } = useWallet();
   const { triggerRefresh } = useRefresh();
-  const { borrow, repay, loading, error, getUserDebt, getTokenBalance, getAllowance, approveToken, getMaxBorrow, getAccountHealth } = useLendingPool();
+  const { borrow, repay, loading, error, getUserDebt, getTokenBalance, getAllowance, approveToken, getMaxBorrow, getAccountHealth, getBorrowRate } = useLendingPool();
   const [selectedAsset, setSelectedAsset] = useState(DEFAULT_ASSETS[0]);
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState<'borrow' | 'repay'>('borrow');
@@ -20,6 +20,7 @@ export default function BorrowRepay() {
   const [loadingData, setLoadingData] = useState(false);
   const [allowance, setAllowance] = useState<bigint>(0n);
   const [needsApproval, setNeedsApproval] = useState(false);
+  const [borrowRateBP, setBorrowRateBP] = useState(200); // Basis points
 
   // Fetch user debt, token balance, max borrow, and allowance
   useEffect(() => {
@@ -35,17 +36,19 @@ export default function BorrowRepay() {
 
       setLoadingData(true);
       try {
-        const [userDebt, balance, allow, maxBorrow, health] = await Promise.all([
+        const [userDebt, balance, allow, maxBorrow, health, rate] = await Promise.all([
           getUserDebt(account, selectedAsset.address),
           getTokenBalance(selectedAsset.address, account),
           getAllowance(selectedAsset.address, account, LENDING_POOL_ADDRESS),
           getMaxBorrow(account, selectedAsset.address),
           getAccountHealth(account),
+          getBorrowRate(selectedAsset.address),
         ]);
         setDebt(userDebt);
         setTokenBalance(balance);
         setMaxBorrowable(maxBorrow);
         setAllowance(allow);
+        setBorrowRateBP(rate);
 
         // Calculate borrow limit used percentage
         if (health && health.collateralValue > 0n) {
@@ -66,13 +69,14 @@ export default function BorrowRepay() {
         setMaxBorrowable(0n);
         setBorrowLimitUsed(0);
         setAllowance(0n);
+        setBorrowRateBP(200);
       } finally {
         setLoadingData(false);
       }
     };
 
     fetchData();
-  }, [account, selectedAsset.address, getUserDebt, getTokenBalance, getAllowance, getMaxBorrow, getAccountHealth]);
+  }, [account, selectedAsset.address, getUserDebt, getTokenBalance, getAllowance, getMaxBorrow, getAccountHealth, getBorrowRate]);
 
   // Check if approval is needed for repay mode
   useEffect(() => {
@@ -262,7 +266,7 @@ export default function BorrowRepay() {
               {mode === 'borrow' ? 'Max Borrow' : 'Current debt'}: {loadingData ? '...' : formatAmount(mode === 'borrow' ? maxBorrowable : debt, selectedAsset.decimals)} {selectedAsset.symbol}
             </span>
             <span className="text-primary-400">
-              APY: {formatPercentage(200)}
+              APR: {formatPercentage(borrowRateBP)}
             </span>
           </div>
           {mode === 'borrow' && (

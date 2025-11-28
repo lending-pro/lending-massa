@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '../contexts/WalletContext';
 import { useRefresh } from '../contexts/RefreshContext';
 import { useLendingPool } from '../hooks/useLendingPool';
-import { DEFAULT_ASSETS, PROTOCOL_PARAMS } from '../utils/constants';
+import { DEFAULT_ASSETS, PROTOCOL_PARAMS, LENDING_POOL_ADDRESS } from '../utils/constants';
 import { parseAmount, formatAmount, formatPercentage, shortenAddress } from '../utils/formatting';
 import { LiquidationCandidate } from '../types';
 import HealthFactorGauge from './HealthFactorGauge';
@@ -10,13 +10,14 @@ import HealthFactorGauge from './HealthFactorGauge';
 export default function Liquidations() {
   const { account, connected } = useWallet();
   const { triggerRefresh } = useRefresh();
-  const { liquidate, loading, getAccountHealth, getUserCollateral, getUserDebt } = useLendingPool();
+  const { liquidate, loading, getAccountHealth, getUserCollateral, getUserDebt, getAllowance, approveToken } = useLendingPool();
   const [liquidationCandidates, setLiquidationCandidates] = useState<LiquidationCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<LiquidationCandidate | null>(null);
   const [repayAmount, setRepayAmount] = useState('');
   const [txStatus, setTxStatus] = useState<string>('');
   const [checkAddress, setCheckAddress] = useState('');
   const [checking, setChecking] = useState(false);
+  const [needsApproval, setNeedsApproval] = useState(false);
   const [userHealth, setUserHealth] = useState<{
     collateralValue: bigint;
     debtValue: bigint;
@@ -36,6 +37,50 @@ export default function Liquidations() {
       loadUserHealth();
     }
   }, [connected, account, loadUserHealth]);
+
+  // Check allowance when selected candidate or repay amount changes
+  useEffect(() => {
+    const checkAllowance = async () => {
+      if (!account || !selectedCandidate || !repayAmount) {
+        setNeedsApproval(false);
+        return;
+      }
+
+      try {
+        const debtToken = DEFAULT_ASSETS.find(a => a.address === selectedCandidate.debtToken);
+        if (!debtToken) return;
+
+        const amountBigInt = parseAmount(repayAmount, debtToken.decimals);
+        const currentAllowance = await getAllowance(selectedCandidate.debtToken, account, LENDING_POOL_ADDRESS);
+        setNeedsApproval(currentAllowance < amountBigInt);
+      } catch {
+        setNeedsApproval(false);
+      }
+    };
+
+    checkAllowance();
+  }, [account, selectedCandidate, repayAmount, getAllowance]);
+
+  const handleApprove = async () => {
+    if (!account || !selectedCandidate || !repayAmount) return;
+
+    setTxStatus('');
+    try {
+      const debtToken = DEFAULT_ASSETS.find(a => a.address === selectedCandidate.debtToken);
+      if (!debtToken) return;
+
+      const amountBigInt = parseAmount(repayAmount, debtToken.decimals);
+      await approveToken(selectedCandidate.debtToken, LENDING_POOL_ADDRESS, amountBigInt);
+      setTxStatus('Approval successful! You can now liquidate.');
+
+      // Refetch allowance after approval
+      const newAllowance = await getAllowance(selectedCandidate.debtToken, account, LENDING_POOL_ADDRESS);
+      setNeedsApproval(newAllowance < amountBigInt);
+    } catch (err) {
+      console.error('Approval error:', err);
+      setTxStatus('Approval failed. Please try again.');
+    }
+  };
 
   // Check if an address is liquidatable
   const checkAddressForLiquidation = async () => {
@@ -355,13 +400,24 @@ export default function Liquidations() {
                 </p>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading || !repayAmount}
-                className="w-full btn-primary"
-              >
-                {loading ? 'Processing...' : 'Confirm Liquidation'}
-              </button>
+              {needsApproval ? (
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={loading || !repayAmount}
+                  className="w-full btn-primary"
+                >
+                  {loading ? 'Approving...' : `Approve ${DEFAULT_ASSETS.find(a => a.address === selectedCandidate.debtToken)?.symbol || 'Token'}`}
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={loading || !repayAmount}
+                  className="w-full btn-primary"
+                >
+                  {loading ? 'Processing...' : 'Confirm Liquidation'}
+                </button>
+              )}
 
               {txStatus && (
                 <div className={`p-4 rounded-lg ${
