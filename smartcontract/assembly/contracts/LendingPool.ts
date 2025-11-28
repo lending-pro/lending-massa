@@ -32,6 +32,7 @@ import {
   LIQUIDATION_BONUS_MAX_KEY,
   FLASH_LOAN_FEE_KEY,
   FLASH_LOAN_ENABLED_KEY,
+  REENTRANCY_GUARD_KEY,
   UserCollateralStorage,
   UserDebtStorage,
   UserLastUpdateStorage,
@@ -80,6 +81,21 @@ function whenNotPaused(): void {
  */
 function whenPaused(): void {
   assert(SimpleStorage.getBool(PAUSED_KEY, false), 'Contract is not paused');
+}
+
+/**
+ * Reentrancy guard - acquire lock
+ */
+function nonReentrantStart(): void {
+  assert(!SimpleStorage.getBool(REENTRANCY_GUARD_KEY, false), 'Reentrant call');
+  SimpleStorage.setBool(REENTRANCY_GUARD_KEY, true);
+}
+
+/**
+ * Reentrancy guard - release lock
+ */
+function nonReentrantEnd(): void {
+  SimpleStorage.setBool(REENTRANCY_GUARD_KEY, false);
 }
 
 /**
@@ -198,6 +214,7 @@ export function depositCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> 
  */
 export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   whenNotPaused();
+  nonReentrantStart();
 
   const args = new Args(binaryArgs);
   const tokenAddress = args.nextString().expect('Token address is missing');
@@ -244,6 +261,14 @@ export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8>
   // Update timestamp
   UserLastUpdateStorage.set(caller, tokenAddress, currentTime);
 
+  // if user has no collateral AND no debt in this asset, remove it from their list
+  if (SafeMath.isZero(newCollateral)) {
+    const debt = UserDebtStorage.get(caller, tokenAddress);
+    if (SafeMath.isZero(debt)) {
+      UserAssetsStorage.removeAsset(caller, tokenAddress);
+    }
+  }
+
   // Emit event
   generateEvent(createEvent('CollateralWithdrawn', [
     caller,
@@ -251,6 +276,7 @@ export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8>
     amount.toString()
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Collateral withdrawn successfully');
 }
 
@@ -260,6 +286,7 @@ export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8>
  */
 export function borrow(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   whenNotPaused();
+  nonReentrantStart();
 
   const args = new Args(binaryArgs);
   const tokenAddress = args.nextString().expect('Token address is missing');
@@ -313,6 +340,7 @@ export function borrow(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     newDebt.toString()
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Tokens borrowed successfully');
 }
 
@@ -322,6 +350,7 @@ export function borrow(binaryArgs: StaticArray<u8>): StaticArray<u8> {
  */
 export function repay(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   whenNotPaused();
+  nonReentrantStart();
 
   const args = new Args(binaryArgs);
   const tokenAddress = args.nextString().expect('Token address is missing');
@@ -355,6 +384,14 @@ export function repay(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   // Update timestamp
   UserLastUpdateStorage.set(caller, tokenAddress, currentTime);
 
+  // if user has no debt AND no collateral in this asset, remove it from their list
+  if (SafeMath.isZero(newDebt)) {
+    const collateral = UserCollateralStorage.get(caller, tokenAddress);
+    if (SafeMath.isZero(collateral)) {
+      UserAssetsStorage.removeAsset(caller, tokenAddress);
+    }
+  }
+
   // Emit event
   generateEvent(createEvent('DebtRepaid', [
     caller,
@@ -363,6 +400,7 @@ export function repay(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     newDebt.toString()
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Debt repaid successfully');
 }
 
@@ -389,10 +427,22 @@ function _calculateLiquidationBonus(healthFactor: u256): u32 {
 
   // Linear interpolation between min and max bonus
   // bonus = maxBonus - ((healthFactor - 0.5) / 0.5) * (maxBonus - minBonus)
-  const bonusRange = maxBonus - minBonus;
+  // Rewritten for better precision: bonus = maxBonus - (hfAboveHalf * bonusRange / halfPrecision)
+  const bonusRange = u256.fromU32(maxBonus - minBonus);
   const hfAboveHalf = SafeMath.sub(healthFactor, halfPrecision);
-  const ratio = SafeMath.div(SafeMath.mul(hfAboveHalf, u256.fromU64(10000)), halfPrecision);
-  const bonusReduction = u32(ratio.toU64()) * bonusRange / 10000;
+
+  // Calculate bonusReduction = (hfAboveHalf * bonusRange) / halfPrecision
+  // This maintains precision by doing multiplication before division
+  const numerator = SafeMath.mul(hfAboveHalf, bonusRange);
+  const bonusReductionU256 = SafeMath.div(numerator, halfPrecision);
+
+  // Safe conversion to u32 - bonusReduction should be <= bonusRange which is <= 5000
+  const bonusReduction = u32(bonusReductionU256.toU64());
+
+  // Ensure we don't underflow
+  if (bonusReduction >= maxBonus - minBonus) {
+    return minBonus;
+  }
 
   return maxBonus - bonusReduction;
 }
@@ -403,6 +453,7 @@ function _calculateLiquidationBonus(healthFactor: u256): u32 {
  */
 export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   whenNotPaused();
+  nonReentrantStart();
 
   const args = new Args(binaryArgs);
   const borrower = args.nextString().expect('Borrower address is missing');
@@ -484,6 +535,7 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     liquidationBonus.toString()
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Position liquidated successfully');
 }
 
@@ -539,12 +591,21 @@ function _accrueInterest(user: string, tokenAddress: string): void {
   // Calculate interest accrued
   const interestAccrued = SafeMath.sub(newDebt, currentDebt);
 
-  // Calculate protocol fee (reserve factor)
-  const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
-  if (reserveFactor > 0 && SafeMath.isPositive(interestAccrued)) {
-    const protocolFee = SafeMath.mulBP(interestAccrued, reserveFactor);
-    // Add to treasury reserves
-    TreasuryReservesStorage.add(tokenAddress, protocolFee);
+  // Only proceed if there's actually interest accrued
+  if (SafeMath.isPositive(interestAccrued)) {
+    // Calculate protocol fee (reserve factor)
+    const reserveFactor = SimpleStorage.getU32(RESERVE_FACTOR_KEY);
+    if (reserveFactor > 0) {
+      const protocolFee = SafeMath.mulBP(interestAccrued, reserveFactor);
+      // Add to treasury reserves
+      TreasuryReservesStorage.add(tokenAddress, protocolFee);
+    }
+
+    // Also update total borrows to include accrued interest
+    // This ensures that when users repay (including interest), totalBorrows
+    // doesn't underflow
+    const updatedTotalBorrows = SafeMath.add(totalBorrows, interestAccrued);
+    TotalBorrowsStorage.set(tokenAddress, updatedTotalBorrows);
   }
 
   // Update storage
@@ -574,15 +635,26 @@ function _calculateAccountHealth(user: string): AccountHealth {
       continue;
     }
 
+    // Get collateral and debt for this asset first
+    const collateral = UserCollateralStorage.get(user, tokenAddress);
+    let debt = UserDebtStorage.get(user, tokenAddress);
+
     // Get asset price
     const price = _getAssetPrice(tokenAddress);
+
+    // If user has debt in this asset, price MUST be valid
+    // Otherwise debt would be hidden and position could appear healthy when it's not
+    if (SafeMath.isPositive(debt)) {
+      assert(SafeMath.isPositive(price), 'Price not set for asset with debt: ' + tokenAddress);
+    }
+
+    // If price is zero but user only has collateral, skip it
+    // (conservative - collateral won't help but also won't hurt)
     if (SafeMath.isZero(price)) {
-      // If price is not set, skip this asset (or could revert)
       continue;
     }
 
     // Calculate collateral value for this asset
-    const collateral = UserCollateralStorage.get(user, tokenAddress);
     if (SafeMath.isPositive(collateral)) {
       // Get token decimals to normalize value to 18 decimals
       const token = createTokenInterface(tokenAddress);
@@ -596,7 +668,6 @@ function _calculateAccountHealth(user: string): AccountHealth {
     }
 
     // Calculate debt value for this asset (with accrued interest)
-    let debt = UserDebtStorage.get(user, tokenAddress);
     if (SafeMath.isPositive(debt)) {
       // Calculate debt with accrued interest
       const lastUpdate = UserLastUpdateStorage.get(user, tokenAddress);
@@ -1103,6 +1174,7 @@ export function canLiquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
  */
 export function flashLoan(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   whenNotPaused();
+  nonReentrantStart();
 
   // Check if flash loans are enabled
   assert(SimpleStorage.getBool(FLASH_LOAN_ENABLED_KEY, true), 'Flash loans are disabled');
@@ -1168,6 +1240,7 @@ export function flashLoan(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     feeAmount.toString()
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Flash loan executed successfully');
 }
 
@@ -1217,6 +1290,7 @@ export function setTreasuryAddress(binaryArgs: StaticArray<u8>): StaticArray<u8>
  */
 export function withdrawTreasuryReserves(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   onlyOwner();
+  nonReentrantStart();
 
   const args = new Args(binaryArgs);
   const tokenAddress = args.nextString().expect('Token address is missing');
@@ -1241,6 +1315,7 @@ export function withdrawTreasuryReserves(binaryArgs: StaticArray<u8>): StaticArr
     treasuryAddress
   ]));
 
+  nonReentrantEnd();
   return stringToBytes('Treasury reserves withdrawn successfully');
 }
 

@@ -46,6 +46,9 @@ export const LIQUIDATION_BONUS_MAX_KEY = 'liq_bonus_max'; // Max bonus (e.g., 15
 export const FLASH_LOAN_FEE_KEY = 'flash_loan_fee'; // Flash loan fee (e.g., 9 = 0.09%)
 export const FLASH_LOAN_ENABLED_KEY = 'flash_loan_enabled'; // Enable/disable flash loans
 
+// Reentrancy Guard
+export const REENTRANCY_GUARD_KEY = 'reentrancy_locked';
+
 // ============================================
 // PersistentMap Storage Classes
 // ============================================
@@ -151,7 +154,10 @@ export class SupportedAssetsStorage {
   }
 
   static isSupported(tokenAddress: string): bool {
-    return Storage.has(this.getKey(tokenAddress));
+    const key = this.getKey(tokenAddress);
+    if (!Storage.has(key)) return false;
+    const value = Storage.get(key);
+    return value == 'true';
   }
 
   static add(tokenAddress: string): void {
@@ -161,10 +167,7 @@ export class SupportedAssetsStorage {
 
   static remove(tokenAddress: string): void {
     const key = this.getKey(tokenAddress);
-    if (Storage.has(key)) {
-      // Note: Massa doesn't have Storage.delete, so we set to empty
-      Storage.set(key, '');
-    }
+    Storage.set(key, 'false');
   }
 }
 
@@ -280,6 +283,16 @@ export class UserAssetsStorage {
     const assets = this.getAssets(userAddress);
     if (assets.indexOf(tokenAddress) === -1) {
       assets.push(tokenAddress);
+      const key = this.getKey(userAddress);
+      Storage.set(key, assets.join(','));
+    }
+  }
+
+  static removeAsset(userAddress: string, tokenAddress: string): void {
+    const assets = this.getAssets(userAddress);
+    const index = assets.indexOf(tokenAddress);
+    if (index !== -1) {
+      assets.splice(index, 1);
       const key = this.getKey(userAddress);
       Storage.set(key, assets.join(','));
     }
