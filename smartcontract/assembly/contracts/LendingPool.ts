@@ -294,9 +294,10 @@ export function withdrawCollateral(binaryArgs: StaticArray<u8>): StaticArray<u8>
     );
   }
 
-  // Update total collateral
+  // Update total collateral (use min to prevent underflow from interest accrual mismatch)
   const totalCollateral = TotalCollateralStorage.get(tokenAddress);
-  TotalCollateralStorage.set(tokenAddress, SafeMath.sub(totalCollateral, amount));
+  const totalCollateralReduction = SafeMath.min(amount, totalCollateral);
+  TotalCollateralStorage.set(tokenAddress, SafeMath.sub(totalCollateral, totalCollateralReduction));
 
   // Transfer tokens to caller
   const token = createTokenInterface(tokenAddress);
@@ -385,9 +386,10 @@ export function emergencyWithdraw(binaryArgs: StaticArray<u8>): StaticArray<u8> 
   // Update user's supply index to current
   UserSupplyIndexStorage.set(caller, tokenAddress, currentIndex);
 
-  // Update total collateral
+  // Update total collateral (use min to prevent underflow from interest accrual mismatch)
   const totalCollateral = TotalCollateralStorage.get(tokenAddress);
-  TotalCollateralStorage.set(tokenAddress, SafeMath.sub(totalCollateral, amount));
+  const totalCollateralReduction = SafeMath.min(amount, totalCollateral);
+  TotalCollateralStorage.set(tokenAddress, SafeMath.sub(totalCollateral, totalCollateralReduction));
 
   // Transfer tokens to caller
   const token = createTokenInterface(tokenAddress);
@@ -519,9 +521,10 @@ export function repay(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const newDebt = SafeMath.sub(currentDebt, actualAmount);
   UserDebtStorage.set(caller, tokenAddress, newDebt);
 
-  // Update total borrows
+  // Update total borrows (use min to prevent underflow from state inconsistencies)
   const totalBorrows = TotalBorrowsStorage.get(tokenAddress);
-  TotalBorrowsStorage.set(tokenAddress, SafeMath.sub(totalBorrows, actualAmount));
+  const totalBorrowsReduction = SafeMath.min(actualAmount, totalBorrows);
+  TotalBorrowsStorage.set(tokenAddress, SafeMath.sub(totalBorrows, totalBorrowsReduction));
 
   // Update timestamp
   UserLastUpdateStorage.set(caller, tokenAddress, currentTime);
@@ -642,9 +645,17 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     SafeMath.mulBP(collateralToSeize, liquidationBonus)
   );
 
-  // Verify borrower has enough collateral
-  const borrowerCollateral = UserCollateralStorage.get(borrower, collateralToken);
-  assert(borrowerCollateral >= collateralWithBonus, 'Insufficient collateral to seize');
+  // Get borrower's actual collateral with accrued interest
+  const storedCollateral = UserCollateralStorage.get(borrower, collateralToken);
+  const currentIndex = SupplyIndexStorage.get(collateralToken);
+  const userIndex = UserSupplyIndexStorage.get(borrower, collateralToken);
+  const actualBorrowerCollateral = SafeMath.div(
+    SafeMath.mul(storedCollateral, currentIndex),
+    userIndex
+  );
+
+  // Verify borrower has enough actual collateral to seize
+  assert(actualBorrowerCollateral >= collateralWithBonus, 'Insufficient collateral to seize');
 
   // Transfer debt tokens from liquidator to contract
   const debtTokenInterface = createTokenInterface(debtToken);
@@ -654,21 +665,26 @@ export function liquidate(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const newDebt = SafeMath.sub(borrowerDebt, actualLiquidationAmount);
   UserDebtStorage.set(borrower, debtToken, newDebt);
 
-  // Update borrower's collateral
-  const newCollateral = SafeMath.sub(borrowerCollateral, collateralWithBonus);
+  // Update borrower's collateral (using actual collateral with interest)
+  const newCollateral = SafeMath.sub(actualBorrowerCollateral, collateralWithBonus);
   UserCollateralStorage.set(borrower, collateralToken, newCollateral);
+
+  // Update borrower's supply index to current
+  UserSupplyIndexStorage.set(borrower, collateralToken, currentIndex);
 
   // Transfer collateral to liquidator
   const collateralTokenInterface = createTokenInterface(collateralToken);
   collateralTokenInterface.transfer(new Address(liquidator), collateralWithBonus);
 
-  // Update total borrows
+  // Update total borrows (use min to prevent underflow from state inconsistencies)
   const totalBorrows = TotalBorrowsStorage.get(debtToken);
-  TotalBorrowsStorage.set(debtToken, SafeMath.sub(totalBorrows, actualLiquidationAmount));
+  const totalBorrowsReduction = SafeMath.min(actualLiquidationAmount, totalBorrows);
+  TotalBorrowsStorage.set(debtToken, SafeMath.sub(totalBorrows, totalBorrowsReduction));
 
-  // Update total collateral
+  // Update total collateral (use min to prevent underflow from state inconsistencies)
   const totalCollateral = TotalCollateralStorage.get(collateralToken);
-  TotalCollateralStorage.set(collateralToken, SafeMath.sub(totalCollateral, collateralWithBonus));
+  const totalCollateralReduction = SafeMath.min(collateralWithBonus, totalCollateral);
+  TotalCollateralStorage.set(collateralToken, SafeMath.sub(totalCollateral, totalCollateralReduction));
 
   // Emit event
   generateEvent(createEvent('PositionLiquidated', [
@@ -765,6 +781,19 @@ function _updateSupplyIndex(tokenAddress: string): void {
 
   const newIndex = SafeMath.add(currentIndex, indexIncrease);
   SupplyIndexStorage.set(tokenAddress, newIndex);
+
+  // Update totalCollateral to include accrued interest for depositors
+  // When supply index grows, depositors can withdraw more.
+  // interestForDepositors = totalCollateral × indexIncrease / currentIndex
+  if (SafeMath.isPositive(indexIncrease)) {
+    const collateralInterest = SafeMath.div(
+      SafeMath.mul(totalCollateral, indexIncrease),
+      currentIndex
+    );
+    const newTotalCollateral = SafeMath.add(totalCollateral, collateralInterest);
+    TotalCollateralStorage.set(tokenAddress, newTotalCollateral);
+  }
+
   SimpleStorage.setU64(lastUpdateKey, currentTime);
 }
 
