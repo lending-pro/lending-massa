@@ -1,5 +1,5 @@
 // Contract addresses - Update these after deployment
-export const LENDING_POOL_ADDRESS = 'AS12GPWH3kEheitPkFqECFtbHT2JtQ8Bo4TSqyirAFrRknmYRTAzQ'; // Replace with deployed contract address
+export const LENDING_POOL_ADDRESS = 'AS1Qud2jjmuEhDqjSrZowHAjbVVRVK5SST4U4fUXxGAQ1XnPxgcy'; // Updated with security fixes (Dec 1, 2025)
 
 // WMAS contract address (for wrapping/unwrapping native MAS)
 export const WMAS_ADDRESS = 'AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU';
